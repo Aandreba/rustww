@@ -1,4 +1,6 @@
-use rustww::thread::spawn;
+use std::time::Duration;
+
+use rustww::{thread::spawn, notify::Notification};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 #[wasm_bindgen]
@@ -14,7 +16,19 @@ pub fn main () {
 
 #[wasm_bindgen]
 pub fn runner () {
+    test_notification();
+}
+
+fn test_thread () {
     spawn(move || {
         log("Hello world!");
     });
+}
+
+fn test_notification () {
+    Notification::new("Hello world!")
+        .fire_after(Duration::from_secs(1))
+        .close_after(Duration::from_secs(10))
+        .spawn();
+
 }

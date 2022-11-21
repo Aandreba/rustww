@@ -1,4 +1,4 @@
-#![feature(new_uninit, ptr_metadata)]
+#![feature(new_uninit, ptr_metadata, is_some_and)]
 
 #[allow(unused)]
 macro_rules! throw {
@@ -56,9 +56,40 @@ pub(crate) type Result<T> = ::core::result::Result<T, ::wasm_bindgen::JsValue>;
 compile_error!("The `atomics` target feature must be enabled. Try enabling it with `-C target-feature=+atomics`");
 
 #[doc(hidden)]
-pub extern crate wasm_thread;
+extern crate wasm_thread;
 
 /// Web Worker threads (from the [`wasm_thread`](https://github.com/chemicstry/wasm_thread) crate).
-pub use wasm_thread as thread;
+pub mod thread {
+    use std::time::Duration;
+    use js_sys::{Promise, Function};
+    use wasm_bindgen::JsValue;
+    use wasm_bindgen_futures::JsFuture;
+    pub use wasm_thread::*;
+    use web_sys::Window;
+
+    #[inline]
+    pub fn sleep (dur: Duration) -> JsFuture {
+        return wasm_bindgen_futures::JsFuture::from(sleep_promise(dur))
+    }
+
+    pub fn sleep_promise (dur: Duration) -> Promise {
+        use wasm_bindgen::JsCast;
+        
+        let mut f = |resolve: Function, reject: Function| {
+            let window = js_sys::eval("window").unwrap().dyn_into::<Window>().unwrap();
+
+            match window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, dur.as_millis() as i32) {
+                Ok(_) => {},
+                Err(e) => match reject.call1(&JsValue::UNDEFINED, &e) {
+                    Ok(_) => {},
+                    Err(e) => wasm_bindgen::throw_val(e)
+                }
+            }
+        };
+
+        return Promise::new(&mut f);
+    }
+}
 
 pub mod notify;
+mod utils;
