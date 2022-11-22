@@ -1,0 +1,207 @@
+use std::{rc::Rc, task::{Waker, Poll}, collections::VecDeque};
+
+use futures::Stream;
+use wasm_bindgen::{prelude::Closure, __rt::WasmRefCell};
+use web_sys::{DeviceOrientationEvent, DeviceMotionEvent};
+use crate::{Result, WINDOW, utils::OneShot, math::Vec3d};
+use wasm_bindgen::JsCast;
+
+#[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
+pub struct Orientation {
+    /// Indicates whether or not the device is providing orientation data absolutely (that is, in reference to the Earth's coordinate frame) or using some arbitrary frame determined by the device.
+    pub absolute: bool,
+    pub angles: EulerAngles
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct Motion {
+    pub acceleration: Vec3d
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct EulerAngles {
+    /// Represents the motion of the device around the z axis, represented in degrees with values ranging from 0 (inclusive) to 360 (exclusive).
+    pub alpha: f64,
+    /// Represents the motion of the device around the x axis, represented in degrees with values ranging from -180 (inclusive) to 180 (exclusive). This represents a front to back motion of the device.
+    pub beta: f64,
+    /// Represents the motion of the device around the y axis, represented in degrees with values ranging from -90 (inclusive) to 90 (exclusive). This represents a left to right motion of the device.
+    pub gamma: f64
+}
+
+impl Orientation {
+    pub async fn current () -> Result<Self> {
+        let (result, send) = OneShot::new();
+        let f = Closure::<dyn FnMut(DeviceOrientationEvent)>::new(move |evt: DeviceOrientationEvent| {
+            send.try_send(Orientation::from(evt)).unwrap();
+        });
+
+        let listener: &js_sys::Function;
+        cfg_if::cfg_if! {
+            if #[cfg(debug_assertions)] {
+                listener = f.as_ref().dyn_ref().unwrap();
+            } else {
+                listener = f.as_ref().unchecked_ref();
+            }
+        }
+        
+        WINDOW.with(|win| 
+            win.add_event_listener_with_callback_and_bool("deviceorientation", listener, true)
+        )?;
+
+        let result = result.await;
+        
+        WINDOW.with(|win| 
+            win.remove_event_listener_with_callback_and_bool("deviceorientation", listener, true)
+        )?;
+
+        return Ok(result);
+    }
+
+    #[inline]
+    pub fn watch () -> Result<OrientationWatcher> {
+        return OrientationWatcher::new()
+    }
+}
+
+pub struct OrientationWatcher {
+    #[allow(unused)]
+    resolve: Closure<dyn FnMut(DeviceOrientationEvent)>,
+    buffer: Rc<WasmRefCell<(VecDeque<Orientation>, Vec<Waker>)>>,
+}
+
+impl OrientationWatcher {
+    #[inline]
+    pub fn new () -> Result<Self> {
+        let buffer = Rc::new(WasmRefCell::new((VecDeque::new(), Vec::new())));
+
+        let my_buffer = buffer.clone();
+        let resolve = Closure::<dyn FnMut(DeviceOrientationEvent)>::new(move |evt: DeviceOrientationEvent| {
+            let geo = Orientation::from(evt);
+            let mut my_buffer = my_buffer.borrow_mut();
+            my_buffer.0.push_back(geo);
+            my_buffer.1.drain(..).for_each(Waker::wake);
+        });
+
+        let listener: &js_sys::Function;
+        cfg_if::cfg_if! {
+            if #[cfg(debug_assertions)] {
+                listener = resolve.as_ref().dyn_ref().unwrap();
+            } else {
+                listener = resolve.as_ref().unchecked_ref();
+            }
+        }
+
+        WINDOW.with(|win| 
+            win.add_event_listener_with_callback_and_bool("deviceorientation", listener, true)
+        )?;
+
+        return Ok(Self {
+            resolve,
+            buffer,
+        })
+    }
+}
+
+impl Stream for OrientationWatcher {
+    type Item = Orientation;
+
+    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
+        let mut buffer = self.buffer.borrow_mut();
+        if let Some(geo) = buffer.0.pop_front() {
+            return Poll::Ready(Some(geo))
+        }
+
+        buffer.1.push(cx.waker().clone());
+        return Poll::Pending
+    }
+}
+
+impl Drop for OrientationWatcher {
+    fn drop(&mut self) {
+        let listener: &js_sys::Function;
+        cfg_if::cfg_if! {
+            if #[cfg(debug_assertions)] {
+                listener = self.resolve.as_ref().dyn_ref().unwrap();
+            } else {
+                listener = self.resolve.as_ref().unchecked_ref();
+            }
+        }
+
+        WINDOW.with(|win| 
+            win.remove_event_listener_with_callback_and_bool("deviceorientation", listener, true)
+        ).unwrap();
+    }
+}
+
+impl Motion {
+    pub async fn current () -> Result<Self> {
+        let (result, send) = OneShot::new();
+        let f = Closure::<dyn FnMut(DeviceMotionEvent)>::new(move |evt: DeviceMotionEvent| {
+            todo!()
+            //send.try_send(Orientation::from(evt)).unwrap();
+        });
+
+        let listener: &js_sys::Function;
+        cfg_if::cfg_if! {
+            if #[cfg(debug_assertions)] {
+                listener = f.as_ref().dyn_ref().unwrap();
+            } else {
+                listener = f.as_ref().unchecked_ref();
+            }
+        }
+        
+        WINDOW.with(|win| 
+            win.add_event_listener_with_callback_and_bool("devicemotion", listener, true)
+        )?;
+
+        let result = result.await;
+        
+        WINDOW.with(|win| 
+            win.remove_event_listener_with_callback_and_bool("devicemotion", listener, true)
+        )?;
+
+        return Ok(result);
+    }
+
+    #[inline]
+    pub fn watch () -> Result<OrientationWatcher> {
+        return OrientationWatcher::new()
+    }
+}
+
+impl From<&DeviceOrientationEvent> for Orientation {
+    #[inline]
+    fn from(value: &DeviceOrientationEvent) -> Self {
+        Self {
+            absolute: value.absolute(),
+            angles: value.into()
+        }
+    }
+}
+
+impl From<&DeviceOrientationEvent> for EulerAngles {
+    #[inline]
+    fn from(value: &DeviceOrientationEvent) -> Self {
+        Self {
+            alpha: value.alpha().unwrap(),
+            beta: value.beta().unwrap(),
+            gamma: value.gamma().unwrap()
+        }
+    }
+}
+
+impl From<DeviceOrientationEvent> for Orientation {
+    #[inline]
+    fn from(value: DeviceOrientationEvent) -> Self {
+        return Orientation::from(&value)
+    }
+}
+
+impl From<DeviceOrientationEvent> for EulerAngles {
+    #[inline]
+    fn from(value: DeviceOrientationEvent) -> Self {
+        return EulerAngles::from(&value)
+    }
+}

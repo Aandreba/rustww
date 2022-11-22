@@ -7,5 +7,4 @@ doc:
 test:
 	RUSTFLAGS='-C target-feature=+atomics,+bulk-memory,+mutable-globals' wasm-pack build --target web --out-dir ../server/pkg tests -Z build-std=std,panic_abort
 	@cp tests/index.html ./server/pkg/
-	@cp js/service_worker.js ./server/pkg/
 	@cd server && RUST_BACKTRACE=1 cargo run & open http://localhost:3000

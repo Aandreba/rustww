@@ -1,6 +1,6 @@
 use std::time::Duration;
-use futures::TryStreamExt;
-use rustww::{thread::spawn, notify::{Notification, get_permision}, geo::Geolocation};
+use futures::{TryStreamExt, StreamExt};
+use rustww::{thread::spawn, notify::{Notification, get_permision}, geo::Geolocation, orient::Orientation};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 #[wasm_bindgen]
@@ -16,7 +16,7 @@ pub fn main () {
 
 #[wasm_bindgen]
 pub fn runner () {
-    test_geo();
+    test_orientation();
 }
 
 fn test_thread () {
@@ -33,14 +33,24 @@ fn test_notification () {
 }
 
 fn test_geo () {
-    use futures::stream::StreamExt;
-
     wasm_bindgen_futures::spawn_local(async move {
         let geo = Geolocation::current().unwrap().await.unwrap();
         log(&format!("{geo:?}"));
 
-        let mut watch = Geolocation::watch().unwrap().take(5);
+        let mut watch = Geolocation::watch().unwrap();
         while let Some(geo) = watch.try_next().await.unwrap() {
+            log(&format!("{geo:?}"));
+        }
+    });
+}
+
+fn test_orientation () {
+    wasm_bindgen_futures::spawn_local(async move {
+        let orientation = Orientation::current().await.unwrap();
+        log(&format!("{orientation:?}"));
+
+        let mut watch = Orientation::watch().unwrap();
+        while let Some(geo) = watch.next().await {
             log(&format!("{geo:?}"));
         }
     });

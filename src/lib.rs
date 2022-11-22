@@ -75,6 +75,16 @@ pub mod thread {
     }
 }
 
+/// Math-related types
+pub mod math;
+
+/// Notification API
 pub mod notify;
+
+/// Geolocation API
 pub mod geo;
+
+/// Device Orientation API
+pub mod orient;
+
 mod utils;

@@ -1,7 +1,7 @@
-use std::{cell::{Cell}, rc::Rc, task::{Waker, Poll}, future::Future, collections::VecDeque};
-use futures::Stream;
+use std::{rc::Rc, task::{Waker, Poll}, future::Future, collections::VecDeque};
+use futures::{Stream, TryFutureExt};
 use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsCast, JsValue, __rt::WasmRefCell};
-use crate::{NAVIGATOR, Result,};
+use crate::{NAVIGATOR, Result, utils::OneShot,};
 
 #[wasm_bindgen]
 extern {
@@ -126,22 +126,16 @@ impl Drop for GeolocationWatcher {
 
 impl Geolocation {
     pub fn current () -> Result<CurrentGeolocation> {
-        let result = Rc::new(FutureInner::default());
+        let (inner, send) = OneShot::new();
 
-        let my_result = result.clone();
+        let my_result = send.clone();
         let resolve_closure = Closure::once(move |loc: GeolocationPosition| {
-            my_result.value.set(Some(Ok(loc)));
-            if let Some(waker) = my_result.waker.take() {
-                waker.wake();
-            }
+            let _ = my_result.try_send(Ok(loc));
         });
 
-        let my_result = result.clone();
+        let my_result = send.clone();
         let reject_closure = Closure::once(move |err: JsValue| {
-            my_result.value.set(Some(Err(err)));
-            if let Some(waker) = my_result.waker.take() {
-                waker.wake();
-            }
+            let _ = my_result.try_send(Err(err));
         });
 
         let resolve: &js_sys::Function;
@@ -164,7 +158,7 @@ impl Geolocation {
             Err(e) => return Err(e)
         }
 
-        return Ok(CurrentGeolocation { inner: Some(result) })
+        return Ok(CurrentGeolocation { inner })
     }
 
     #[inline]
@@ -210,29 +204,17 @@ impl From<GeolocationPosition> for Geolocation {
 }
 
 pub struct CurrentGeolocation {
-    inner: Option<Rc<FutureInner>>
+    inner: OneShot<Result<GeolocationPosition>>
 }
 
 impl Future for CurrentGeolocation {
     type Output = Result<Geolocation>;
 
+    #[inline]
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
-        if let Some(ref mut inner) = self.inner {
-            if let Some(geo) = inner.value.take() {
-                self.inner = None;
-                return Poll::Ready(geo.map(Geolocation::from));
-            }
-    
-            inner.waker.set(Some(cx.waker().clone()));
-            return Poll::Pending
+        if let Poll::Ready(x) = self.inner.try_poll_unpin(cx)? {
+            return Poll::Ready(Ok(Geolocation::from(x)))
         }
-
-        panic!("Value already extracted")
+        return Poll::Pending
     }
-}
-
-#[derive(Default)]
-struct FutureInner {
-    value: Cell<Option<Result<GeolocationPosition>>>,
-    waker: Cell<Option<Waker>>
 }
