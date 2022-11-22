@@ -1,4 +1,4 @@
-#![feature(new_uninit, ptr_metadata, is_some_and)]
+#![feature(new_uninit, ptr_metadata, is_some_and, iter_intersperse, core_intrinsics)]
 
 #[allow(unused)]
 macro_rules! throw {
@@ -16,73 +16,57 @@ macro_rules! throw {
 }
 
 #[allow(unused)]
-macro_rules! get_worker_script {
-    ($path:literal) => {
-        unsafe {
-            static mut SCRIPT_URL: Option<String> = None;
-    
-            if let Some(url) = SCRIPT_URL.as_ref() {
-                url.clone()
-            } else {
-                // If wasm bindgen shim url is not provided, try to obtain one automatically
-                let wasm_bindgen_shim_url = $crate::get_wasm_bindgen_shim_script_path();
-    
-                // Generate script from template
-                let template = include_str!($path);
-                let script = template.replace("WASM_BINDGEN_SHIM_URL", &wasm_bindgen_shim_url);
-    
-                // Create url encoded blob
-                let arr = js_sys::Array::new();
-                arr.set(0, wasm_bindgen::JsValue::from_str(&script));
-                let blob = web_sys::Blob::new_with_str_sequence(&arr).unwrap();
-                let url = web_sys::Url::create_object_url_with_blob(
-                    &blob
-                        .slice_with_f64_and_f64_and_content_type(0.0, blob.size(), "text/javascript")
-                        .unwrap(),
-                )
-                .unwrap();
-                SCRIPT_URL = Some(url.clone());
-    
-                url
-            }
-        }
-    }
-}
-
-#[allow(unused)]
 pub(crate) type Result<T> = ::core::result::Result<T, ::wasm_bindgen::JsValue>;
 
-#[cfg(all(target_family = "wasm", not(target_feature = "atomics")))]
+#[cfg(all(not(docsrs), target_family = "wasm", not(target_feature = "atomics")))]
 compile_error!("The `atomics` target feature must be enabled. Try enabling it with `-C target-feature=+atomics`");
+
+thread_local! {
+    pub(crate) static WINDOW: web_sys::Window = web_sys::window().unwrap();
+    pub(crate) static NAVIGATOR: web_sys::Navigator = WINDOW.with(|window| window.navigator());
+}
 
 #[doc(hidden)]
 extern crate wasm_thread;
 
 /// Web Worker threads (from the [`wasm_thread`](https://github.com/chemicstry/wasm_thread) crate).
 pub mod thread {
-    use std::time::Duration;
+    use std::{time::Duration, intrinsics::unlikely};
     use js_sys::{Promise, Function};
     use wasm_bindgen::JsValue;
-    use wasm_bindgen_futures::JsFuture;
     pub use wasm_thread::*;
-    use web_sys::Window;
+    use crate::{WINDOW, Result};
 
     #[inline]
-    pub fn sleep (dur: Duration) -> JsFuture {
-        return wasm_bindgen_futures::JsFuture::from(sleep_promise(dur))
+    pub async fn sleep (dur: Duration) -> Result<()> {
+        return wasm_bindgen_futures::JsFuture::from(sleep_promise(dur)).await.map(|_| ())
     }
 
     pub fn sleep_promise (dur: Duration) -> Promise {
-        use wasm_bindgen::JsCast;
-        
-        let mut f = |resolve: Function, reject: Function| {
-            let window = js_sys::eval("window").unwrap().dyn_into::<Window>().unwrap();
+        const MAX: u128 = i32::MAX as u128;
+        let millis = dur.as_millis();
 
-            match window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, dur.as_millis() as i32) {
+        let mut f = |resolve: Function, reject: Function| {
+            if unlikely(millis > MAX) {
+                match reject.call1(&JsValue::UNDEFINED, &JsValue::from_str("Duration overflow")) {
+                    Ok(_) => {},
+                    Err(e) => {
+                        drop(resolve);
+                        drop(reject);
+                        wasm_bindgen::throw_val(e)
+                    }
+                }
+            }
+
+            match WINDOW.with(|window| window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, millis as i32)) {
                 Ok(_) => {},
                 Err(e) => match reject.call1(&JsValue::UNDEFINED, &e) {
                     Ok(_) => {},
-                    Err(e) => wasm_bindgen::throw_val(e)
+                    Err(e) => {
+                        drop(resolve);
+                        drop(reject);
+                        wasm_bindgen::throw_val(e);
+                    }
                 }
             }
         };
@@ -92,4 +76,5 @@ pub mod thread {
 }
 
 pub mod notify;
+pub mod geo;
 mod utils;

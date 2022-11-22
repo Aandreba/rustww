@@ -1,26 +1,18 @@
-use std::{time::{Duration, SystemTime}, sync::atomic::{Ordering}};
+use std::{time::{Duration}};
 use into_string::IntoString;
 use web_sys::{NotificationOptions, NotificationPermission};
+use crate::{Result};
 
-use crate::{utils::OnceCell, Result};
-
-const DENIED: u8 = 0;
-const GRANTED: u8 = 1;
-const NONE: u8 = 2;
-const WAITING: u8 = 3;
-
-enum Delay {
+pub(crate) enum Delay {
     Duration (Duration),
-    Time (SystemTime),
-    #[cfg(feature = "chrono")]
     Date (chrono::DateTime<chrono::Utc>)
 }
 
 pub struct Notification {
-    title: String,
-    body: Option<String>,
-    open: Option<Delay>,
-    close: Option<Delay>
+    pub(crate) title: String,
+    pub(crate) body: Option<String>,
+    pub(crate) open: Option<Delay>,
+    pub(crate) close: Option<Delay>
 }
 
 impl Notification {
@@ -46,13 +38,6 @@ impl Notification {
         self
     }
 
-    #[inline]
-    pub fn fire_time (mut self, time: SystemTime) -> Self {
-        self.open = Some(Delay::Time(time));
-        self
-    }
-
-    #[cfg(feature = "chrono")]
     pub fn fire_date<Tz: chrono::TimeZone> (mut self, date: chrono::DateTime<Tz>) -> Self {
         self.open = Some(Delay::Date(date.with_timezone(&chrono::Utc)));
         self
@@ -64,25 +49,16 @@ impl Notification {
         self
     }
 
-    #[inline]
-    pub fn close_time (mut self, time: SystemTime) -> Self {
-        self.close = Some(Delay::Time(time));
-        self
-    }
-
-    #[cfg(feature = "chrono")]
     pub fn close_date<Tz: chrono::TimeZone> (mut self, date: chrono::DateTime<Tz>) -> Self {
         self.close = Some(Delay::Date(date.with_timezone(&chrono::Utc)));
         self
     }
 
-    pub fn spawn (self) {
+    pub fn spawn_local (self) {
         async fn wait_delay (delay: Option<Delay>) {
             if let Some(delay) = delay {
                 let delay = match delay {
                     Delay::Duration(dur) => dur,
-                    Delay::Time(time) => time.duration_since(SystemTime::now()).unwrap(),
-                    #[cfg(feature = "chrono")]
                     Delay::Date(date) => (date - chrono::Utc::now()).to_std().unwrap()
                 };
 
@@ -96,7 +72,7 @@ impl Notification {
             if !get_permision().await.is_ok_and(core::convert::identity) {
                 panic!("Notification access denied");
             }
-
+            
             let mut options = NotificationOptions::new();
             if let Some(body) = self.body {
                 options.body(&body);
@@ -110,7 +86,7 @@ impl Notification {
     }
 }
 
-async fn get_permision () -> Result<bool> {
+pub async fn get_permision () -> Result<bool> {
     loop {
         match web_sys::Notification::permission() {
             NotificationPermission::Granted => return Ok(true),

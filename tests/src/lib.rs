@@ -1,6 +1,6 @@
 use std::time::Duration;
-
-use rustww::{thread::spawn, notify::Notification};
+use futures::TryStreamExt;
+use rustww::{thread::spawn, notify::{Notification, get_permision}, geo::Geolocation};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 #[wasm_bindgen]
@@ -16,7 +16,7 @@ pub fn main () {
 
 #[wasm_bindgen]
 pub fn runner () {
-    test_notification();
+    test_geo();
 }
 
 fn test_thread () {
@@ -29,6 +29,19 @@ fn test_notification () {
     Notification::new("Hello world!")
         .fire_after(Duration::from_secs(1))
         .close_after(Duration::from_secs(10))
-        .spawn();
+        .spawn_local();
+}
 
+fn test_geo () {
+    use futures::stream::StreamExt;
+
+    wasm_bindgen_futures::spawn_local(async move {
+        let geo = Geolocation::current().unwrap().await.unwrap();
+        log(&format!("{geo:?}"));
+
+        let mut watch = Geolocation::watch().unwrap().take(5);
+        while let Some(geo) = watch.try_next().await.unwrap() {
+            log(&format!("{geo:?}"));
+        }
+    });
 }

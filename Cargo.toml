@@ -9,18 +9,26 @@ default = ["es_modules"]
 es_modules = ["wasm_thread/es_modules"]
 
 [dependencies]
+async-channel = "1.7.1"
 async-mutex = "1.4.0"
 cfg-if = "1.0.0"
-chrono = { version = "0.4.23", optional = true, features = ["js-sys"] }
+chrono = { version = "0.4.23", features = ["js-sys", "wasmbind"] }
+futures = "0.3.25"
+getrandom = { version = "0.2.8", features = ["js"] }
 into_string = "2.0.0"
 js-sys = "0.3.60"
+rand = "0.8.5"
 serde = { version = "1.0.147", features = ["derive"] }
 serde-wasm-bindgen = "0.4.5"
 utils-atomics = { version = "0.2.3", features = ["futures"] }
 wasm-bindgen = "0.2.83"
 wasm-bindgen-futures = "0.4.33"
 wasm_thread = "0.2.0"
-web-sys = { version = "0.3.60", features = ["Blob", "Url", "Worker", "WorkerOptions", "DedicatedWorkerGlobalScope", "MessageEvent", "Notification", "NotificationOptions", "NotificationEvent", "Window", "NotificationPermission"] }
+web-sys = { version = "0.3.60", features = ["Blob", "Url", "Worker", "WorkerOptions", "DedicatedWorkerGlobalScope", "MessageEvent", "Notification", "NotificationOptions", "NotificationEvent", "Window", "NotificationPermission", "Navigator", "ServiceWorkerContainer", "RegistrationOptions", "ServiceWorkerRegistration", "Geolocation"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [workspace]
 members = ["tests", "server"]

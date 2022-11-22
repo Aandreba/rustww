@@ -1,4 +1,4 @@
-use std::{cell::UnsafeCell, mem::MaybeUninit};
+use std::{cell::UnsafeCell, mem::{MaybeUninit, ManuallyDrop}, rc::{Weak, Rc}, task::{Waker, Poll}, future::Future, ops::Deref, hint::unreachable_unchecked};
 use utils_atomics::{flag::{AsyncFlag, AsyncSubscribe}, TakeCell};
 
 const UNINIT: u8 = 0;
