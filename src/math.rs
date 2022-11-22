@@ -176,6 +176,85 @@ macro_rules! impl_scalar_vec {
     };
 }
 
+cfg_if::cfg_if! {
+    if #[cfg(target_feature = "simd128")] {
+        #[cfg(target_arch = "wasm32")]
+        use core::arch::wasm32::*;
+        #[cfg(target_arch = "wasm64")]
+        use core::arch::wasm64::*;
+        #[cfg(target_arch = "wasm")]
+        use core::arch::wasm::*;
+    }
+}
+
+//#[cfg(target_feature = "simd128")]
+pub struct Vec4f {
+    inner: v128
+}
+
+//#[cfg(target_feature = "simd128")]
+impl Vec4f {
+    #[inline]
+    pub const fn new (x: f32, y: f32, z: f32, w: f32) -> Self {
+        return Self { inner: f32x4(x, y, z, w) }
+    }
+
+    #[inline]
+    pub const fn splat (v: f32) -> Self {
+        return Self { inner: f32x4_splat(v) }
+    }
+
+    #[inline]
+    pub fn x (self) -> f32 {
+        return f32x4_extract_lane::<0>(self.inner);
+    }
+
+    #[inline]
+    pub fn y (self) -> f32 {
+        return f32x4_extract_lane::<1>(self.inner);
+    }
+
+    #[inline]
+    pub fn z (self) -> f32 {
+        return f32x4_extract_lane::<2>(self.inner);
+    }
+
+    #[inline]
+    pub fn w (self) -> f32 {
+        return f32x4_extract_lane::<3>(self.inner);
+    }
+}
+
+impl Add for Vec4f {
+    type Output = Self;
+
+    #[inline]
+    fn add (self, rhs: Self) -> Self::Output {
+        return Self { inner: f32x4_add(self.inner, rhs.inner) }
+    }
+}
+
+impl Sub for Vec4f {
+    type Output = Self;
+
+    #[inline]
+    fn sub (self, rhs: Self) -> Self::Output {
+        return Self { inner: f32x4_sub(self.inner, rhs.inner) }
+    }
+}
+
+impl Mul for Vec4f {
+    type Output = f32;
+
+    #[inline]
+    fn mul (self, rhs: Self) -> Self::Output {
+        let mul = f32x4_mul(self.inner, rhs.inner);
+        f32x4_
+        return Self { inner: f32x4_add(self.inner, rhs.inner) }
+    }
+}
+
+/*#[cfg(not(target_feature = "simd128"))]
 impl_scalar_vec! {
     pub struct Vec2f: (x, y) => [f32; 2],
     pub struct Vec3f: (x, y, z) => [f32; 3],
@@ -184,4 +263,4 @@ impl_scalar_vec! {
     pub struct Vec2d: (x, y) => [f64; 2],
     pub struct Vec3d: (x, y, z) => [f64; 3],
     pub struct Vec4d: (x, y, z, w) => [f64; 4]
-}
+}*/
