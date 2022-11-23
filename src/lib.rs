@@ -1,4 +1,5 @@
-#![feature(new_uninit, ptr_metadata, is_some_and, iter_intersperse, core_intrinsics)]
+#![feature(new_uninit, ptr_metadata, is_some_and, iter_intersperse, const_fn_floating_point_arithmetic, concat_idents, const_trait_impl, core_intrinsics)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[allow(unused)]
 macro_rules! throw {
@@ -16,15 +17,17 @@ macro_rules! throw {
 }
 
 #[allow(unused)]
-pub(crate) type Result<T> = ::core::result::Result<T, ::wasm_bindgen::JsValue>;
-
-#[cfg(all(not(docsrs), target_family = "wasm", not(target_feature = "atomics")))]
-compile_error!("The `atomics` target feature must be enabled. Try enabling it with `-C target-feature=+atomics`");
-
-thread_local! {
-    pub(crate) static WINDOW: web_sys::Window = web_sys::window().unwrap();
-    pub(crate) static NAVIGATOR: web_sys::Navigator = WINDOW.with(|window| window.navigator());
+macro_rules! flat_mod {
+    ($($i:ident),+) => {
+        $(
+            mod $i;
+            pub use $i::*;
+        )+
+    };
 }
+
+#[allow(unused)]
+pub(crate) type Result<T> = ::core::result::Result<T, ::wasm_bindgen::JsValue>;
 
 #[doc(hidden)]
 extern crate wasm_thread;
@@ -34,8 +37,10 @@ pub mod thread {
     use std::{time::Duration, intrinsics::unlikely};
     use js_sys::{Promise, Function};
     use wasm_bindgen::JsValue;
+    use crate::{Result};
+    
+    #[docfg::docfg(target_feature = "atomics")]
     pub use wasm_thread::*;
-    use crate::{WINDOW, Result};
 
     #[inline]
     pub async fn sleep (dur: Duration) -> Result<()> {
@@ -58,7 +63,7 @@ pub mod thread {
                 }
             }
 
-            match WINDOW.with(|window| window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, millis as i32)) {
+            match web_sys::window().unwrap().set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, millis as i32) {
                 Ok(_) => {},
                 Err(e) => match reject.call1(&JsValue::UNDEFINED, &e) {
                     Ok(_) => {},
@@ -86,5 +91,11 @@ pub mod geo;
 
 /// Device Orientation API
 pub mod orient;
+
+/// Battery API
+pub mod battery;
+
+/// Sendable
+pub mod send;
 
 mod utils;

@@ -1,11 +1,91 @@
 #![allow(unused)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
-use std::{cell::{UnsafeCell, Cell}, mem::{MaybeUninit}, rc::{Rc}, task::{Waker, Poll}, future::Future};
+use std::{cell::{UnsafeCell, Cell}, mem::{MaybeUninit}, rc::{Rc}, task::{Waker, Poll}, future::Future, ops::{Deref, DerefMut}};
 use utils_atomics::{flag::{AsyncFlag, AsyncSubscribe}, TakeCell};
+use wasm_bindgen::__rt::WasmRefCell;
 
 const UNINIT: u8 = 0;
 const WORKING: u8 = 1;
 const INIT: u8 = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct AssertSend<T> (T);
+
+impl<T> AssertSend<T> {
+    #[inline]
+    pub fn new (t: T) -> Self where T: Send {
+        return Self(t)
+    }
+
+    #[inline]
+    pub unsafe fn new_unchecked (t: T) -> Self {
+        return Self(t)
+    }
+
+    #[inline]
+    pub fn into_inner (self) -> T {
+        return self.0
+    }
+}
+
+impl<T> Deref for AssertSend<T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for AssertSend<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+unsafe impl<T> Send for AssertSend<T> {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct AssertSync<T> (T);
+
+impl<T> AssertSync<T> {
+    #[inline]
+    pub fn new (t: T) -> Self where T: Sync {
+        return Self(t)
+    }
+
+    #[inline]
+    pub unsafe fn new_unchecked (t: T) -> Self {
+        return Self(t)
+    }
+
+    #[inline]
+    pub fn into_inner (self) -> T {
+        return self.0
+    }
+}
+
+impl<T> Deref for AssertSync<T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for AssertSync<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+unsafe impl<T> Sync for AssertSync<T> {}
 
 pub struct OnceCell<T> {
     sub: AsyncSubscribe,
