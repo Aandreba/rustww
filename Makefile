@@ -1,4 +1,4 @@
-BROWSER=safari
+BROWSER=chrome
 SERVER_URL=http://localhost:8888
 
 doc:

@@ -1,6 +1,6 @@
 use std::time::Duration;
 use futures::{TryStreamExt, StreamExt};
-use rustww::{thread::spawn, notify::{Notification}, geo::Geolocation, orient::{Orientation, Motion}, math::*};
+use rustww::{thread::spawn, notify::{Notification}, geo::Geolocation, orient::{Orientation, Motion}, math::*, battery::Battery};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 #[wasm_bindgen]
@@ -16,7 +16,7 @@ pub fn main () {
 
 #[wasm_bindgen]
 pub fn runner () {
-    test_orientation();
+    test_battery();
 }
 
 fn test_thread () {
@@ -75,6 +75,13 @@ fn test_motion () {
         while let Some(motion) = watch.next().await {
             log(&format!("{motion:?}"));
         }
+    });
+}
+
+fn test_battery () {
+    wasm_bindgen_futures::spawn_local(async move {
+        let battery = Battery::new_snapshot().await;
+        log(&format!("{battery:?}"))
     });
 }
 

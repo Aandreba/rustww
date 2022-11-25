@@ -104,27 +104,27 @@ pub struct GeolocationWatcher {
     success: Closure<dyn FnMut(GeolocationPosition)>,
     #[allow(unused)]
     failure: Closure<dyn FnMut(JsValue)>,
-    buffer: Rc<WasmRefCell<(VecDeque<Result<Geolocation>>, Vec<Waker>)>>,
+    buffer: Rc<WasmRefCell<(VecDeque<Result<Geolocation>>, Option<Waker>)>>,
 }
 
 impl GeolocationWatcher {
     #[inline]
     pub fn new () -> Result<Self> {
-        let buffer = Rc::new(WasmRefCell::new((VecDeque::new(), Vec::new())));
+        let buffer = Rc::new(WasmRefCell::new((VecDeque::new(), None::<Waker>)));
 
         let my_buffer = buffer.clone();
         let success = Closure::<dyn FnMut(GeolocationPosition)>::new(move |loc: GeolocationPosition| {
             let geo = Geolocation::from(loc);
             let mut my_buffer = my_buffer.borrow_mut();
             my_buffer.0.push_back(Ok(geo));
-            my_buffer.1.drain(..).for_each(Waker::wake);
+            if let Some(waker) = my_buffer.1.take() { waker.wake() }
         });
 
         let my_buffer = buffer.clone();
         let failure = Closure::<dyn FnMut(JsValue)>::new(move |err: JsValue| {
             let mut my_buffer = my_buffer.borrow_mut();
             my_buffer.0.push_back(Err(err));
-            my_buffer.1.drain(..).for_each(Waker::wake);
+            if let Some(waker) = my_buffer.1.take() { waker.wake() }
         });
 
         let resolve: &js_sys::Function;
@@ -159,7 +159,7 @@ impl Stream for GeolocationWatcher {
             return Poll::Ready(Some(geo))
         }
 
-        buffer.1.push(cx.waker().clone());
+        buffer.1 = Some(cx.waker().clone());
         return Poll::Pending
     }
 }

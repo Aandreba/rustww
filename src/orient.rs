@@ -68,20 +68,20 @@ impl Orientation {
 pub struct OrientationWatcher {
     #[allow(unused)]
     resolve: Closure<dyn FnMut(DeviceOrientationEvent)>,
-    buffer: Rc<WasmRefCell<(VecDeque<Orientation>, Vec<Waker>)>>,
+    buffer: Rc<WasmRefCell<(VecDeque<Orientation>, Option<Waker>)>>,
 }
 
 impl OrientationWatcher {
     #[inline]
     pub fn new () -> Result<Self> {
-        let buffer = Rc::new(WasmRefCell::new((VecDeque::new(), Vec::new())));
+        let buffer = Rc::new(WasmRefCell::new((VecDeque::new(), None::<Waker>)));
 
         let my_buffer = buffer.clone();
         let resolve = Closure::<dyn FnMut(DeviceOrientationEvent)>::new(move |evt: DeviceOrientationEvent| {
             let geo = Orientation::from(evt);
             let mut my_buffer = my_buffer.borrow_mut();
             my_buffer.0.push_back(geo);
-            my_buffer.1.drain(..).for_each(Waker::wake);
+            if let Some(waker) = my_buffer.1.take() { waker.wake() }
         });
 
         let listener: &js_sys::Function;
@@ -112,7 +112,7 @@ impl Stream for OrientationWatcher {
             return Poll::Ready(Some(geo))
         }
 
-        buffer.1.push(cx.waker().clone());
+        buffer.1 = Some(cx.waker().clone());
         return Poll::Pending
     }
 }
@@ -237,20 +237,20 @@ impl Motion {
 pub struct MotionWatcher {
     #[allow(unused)]
     resolve: Closure<dyn FnMut(DeviceMotionEvent)>,
-    buffer: Rc<WasmRefCell<(VecDeque<Motion>, Vec<Waker>)>>,
+    buffer: Rc<WasmRefCell<(VecDeque<Motion>, Option<Waker>)>>,
 }
 
 impl MotionWatcher {
     #[inline]
     pub fn new () -> Result<Self> {
-        let buffer = Rc::new(WasmRefCell::new((VecDeque::new(), Vec::new())));
+        let buffer = Rc::new(WasmRefCell::new((VecDeque::new(), None::<Waker>)));
 
         let my_buffer = buffer.clone();
         let resolve = Closure::<dyn FnMut(DeviceMotionEvent)>::new(move |evt: DeviceMotionEvent| {
             let geo = Motion::from(evt);
             let mut my_buffer = my_buffer.borrow_mut();
             my_buffer.0.push_back(geo);
-            my_buffer.1.drain(..).for_each(Waker::wake);
+            if let Some(waker) = my_buffer.1.take() { waker.wake() }
         });
 
         let listener: &js_sys::Function;
@@ -281,7 +281,7 @@ impl Stream for MotionWatcher {
             return Poll::Ready(Some(geo))
         }
 
-        buffer.1.push(cx.waker().clone());
+        buffer.1 = Some(cx.waker().clone());
         return Poll::Pending
     }
 }
@@ -302,77 +302,51 @@ impl Drop for MotionWatcher {
     }
 }
 
-/*cfg_if::cfg_if! {
-    if #[cfg(target_feature = "atomics")] {
+cfg_if::cfg_if! {
+    if #[cfg(any(test, target_feature = "atomics"))] {
         pub struct SendMotionWatcher {
-            #[allow(unused)]
-            resolve: Closure<dyn Send + FnMut(DeviceMotionEvent)>,
+            resolve: SyncableClosure<dyn FnMut(DeviceMotionEvent) + Send + Sync>,
             recv: async_channel::Receiver<Motion>
         }
         
-        impl MotionWatcher {
+        impl SendMotionWatcher {
             #[inline]
             pub fn new () -> Result<Self> {
-                let buffer = Rc::new(WasmRefCell::new((VecDeque::new(), Vec::new())));
-        
-                let my_buffer = buffer.clone();
-                let resolve = Closure::<dyn FnMut(DeviceMotionEvent)>::new(move |evt: DeviceMotionEvent| {
-                    let geo = Motion::from(evt);
-                    let mut my_buffer = my_buffer.borrow_mut();
-                    my_buffer.0.push_back(geo);
-                    my_buffer.1.drain(..).for_each(Waker::wake);
+                let (send, recv) = async_channel::unbounded();
+                let closure = Box::new(move |evt: DeviceMotionEvent| {
+                    let send = send.clone();
+                    let fut = async move { let _ = send.send(Motion::from(evt)).await; };
+                    wasm_bindgen_futures::spawn_local(fut);
                 });
-        
-                let listener: &js_sys::Function;
-                cfg_if::cfg_if! {
-                    if #[cfg(debug_assertions)] {
-                        listener = resolve.as_ref().dyn_ref().unwrap();
-                    } else {
-                        listener = resolve.as_ref().unchecked_ref();
-                    }
-                }
+                let resolve = unsafe { syncable_wrapped_closure::<dyn Fn(DeviceMotionEvent), _>(&closure) };
         
                 let win = web_sys::window().unwrap();
-                win.add_event_listener_with_callback_and_bool("devicemotion", listener, true)?;
+                win.add_event_listener_with_callback_and_bool("devicemotion", &resolve, true)?;
         
                 return Ok(Self {
-                    resolve,
-                    buffer,
+                    resolve: SyncableClosure::new(resolve.sync(), closure),
+                    recv,
                 })
             }
         }
         
-        impl Stream for MotionWatcher {
+        impl Stream for SendMotionWatcher {
             type Item = Motion;
         
-            fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
-                let mut buffer = self.buffer.borrow_mut();
-                if let Some(geo) = buffer.0.pop_front() {
-                    return Poll::Ready(Some(geo))
-                }
-        
-                buffer.1.push(cx.waker().clone());
-                return Poll::Pending
+            #[inline]
+            fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
+                return self.recv.poll_next_unpin(cx)
             }
         }
         
-        impl Drop for MotionWatcher {
-            fn drop(&mut self) {
-                let listener: &js_sys::Function;
-                cfg_if::cfg_if! {
-                    if #[cfg(debug_assertions)] {
-                        listener = self.resolve.as_ref().dyn_ref().unwrap();
-                    } else {
-                        listener = self.resolve.as_ref().unchecked_ref();
-                    }
-                }
-        
+        impl Drop for SendMotionWatcher {
+            fn drop(&mut self) {        
                 let win = web_sys::window().unwrap();
-                win.remove_event_listener_with_callback_and_bool("devicemotion", listener, true).unwrap();
+                win.remove_event_listener_with_callback_and_bool("devicemotion", unsafe { self.resolve.function() }, true).unwrap();
             }
         }
     }
-}*/
+}
 
 impl From<&DeviceMotionEvent> for Motion {
     #[inline]
