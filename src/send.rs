@@ -26,13 +26,6 @@ pub struct SyncableRef<T> {
     inner: NonNull<SendableInner<T>>
 }
 
-impl<T> SyncableRef<T> {
-    #[inline]
-    pub unsafe fn as_ref (&self) -> &T {
-        return &self.inner.as_ref().v
-    }
-}
-
 impl<T: JsCast> Syncable<T> {
     #[inline]
     pub fn new (t: T) -> Self {
@@ -116,7 +109,7 @@ impl<T: ?Sized> SyncableClosure<T> {
 
     #[inline]
     pub unsafe fn function (&self) -> &Function {
-        return unsafe { self.value.as_ref() };
+        return unsafe { &self.value.inner.as_ref().v };
     }
 
     #[inline]
@@ -150,7 +143,7 @@ pub unsafe fn syncable_closure<T: 'static + ?Sized + WasmClosure, F: IntoWasmClo
 }
 
 pub unsafe fn syncable_wrapped_closure<T: 'static + ?Sized + WasmClosure, F: IntoWasmClosure<T> + 'static> (f: &Box<F>) -> Syncable<Function> {
-    // SAFETY: This box will be forgotten by `into_js_value`, so no double-free will
+    // SAFETY: This box will be forgoten by `into_js_value`, so no double-free will occurr
     let dummy_f = unsafe { Box::from_raw(f.deref() as *const F as *mut F).unsize() };
     let closure = Closure::wrap(dummy_f);
 

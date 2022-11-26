@@ -2,13 +2,15 @@ use std::time::Duration;
 use futures::Future;
 use wasm_bindgen::{prelude::wasm_bindgen, JsValue, JsCast};
 use web_sys::BatteryManager;
-use crate::{Result};
+use crate::{Result, window};
 use wasm_bindgen::closure::Closure;
 use std::collections::VecDeque;
 use wasm_bindgen::__rt::WasmRefCell;
 use std::rc::Rc;
 use std::task::*;
 use futures::Stream;
+use futures::StreamExt;
+use crate::utils::*;
 
 #[wasm_bindgen]
 extern {
@@ -31,7 +33,7 @@ pub struct Battery {
 
 impl Battery {
     pub async fn new () -> Result<Self> {
-        let nav = web_sys::window().unwrap().navigator();
+        let nav = window()?.navigator();
         let value = get_battery(&nav).await?;
 
         let inner: web_sys::BatteryManager;
@@ -78,14 +80,11 @@ macro_rules! impl_watch {
         impl Battery {
             $(
                 pub fn $fn (&self) -> Result<$watch> {
-                    let buffer = Rc::new(WasmRefCell::new((VecDeque::new(), None::<Waker>)));
-            
-                    let my_self = self.clone();
-                    let my_buffer = buffer.clone();
-                    let resolve = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
-                        let mut my_buffer = my_buffer.borrow_mut();
-                        my_buffer.0.push_back(my_self.$name());
-                        if let Some(waker) = my_buffer.1.take() { waker.wake() }
+                    let (send, recv) = local_channel();
+                    let resolve = Closure::<dyn FnMut(web_sys::Event)>::new(move |evt: web_sys::Event| {
+                        let my_self = evt.current_target().unwrap();
+                        debug_assert!(my_self.is_instance_of::<BatteryManager>());
+                        let _ = send.try_send(my_self.unchecked_into::<BatteryManager>().$name());
                     });
             
                     let listener: &js_sys::Function;
@@ -97,12 +96,12 @@ macro_rules! impl_watch {
                         }
                     }
             
-                    let win = web_sys::window().unwrap();
-                    win.add_event_listener_with_callback_and_bool($jsname, listener, true)?;
+                    self.inner.add_event_listener_with_callback($jsname, listener)?;
             
                     return Ok($watch {
+                        inner: self.inner.clone(),
                         resolve,
-                        buffer
+                        recv
                     })
                 }
             )+
@@ -110,22 +109,18 @@ macro_rules! impl_watch {
 
         $(
             pub struct $watch {
+                inner: web_sys::BatteryManager,
                 #[allow(unused)]
                 resolve: Closure<dyn FnMut(web_sys::Event)>,
-                buffer: Rc<WasmRefCell<(VecDeque<$ty>, Option<Waker>)>>,
+                recv: LocalReceiver<$ty>
             }
             
             impl Stream for $watch {
                 type Item = $ty;
             
-                fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
-                    let mut buffer = self.buffer.borrow_mut();
-                    if let Some(geo) = buffer.0.pop_front() {
-                        return Poll::Ready(Some(geo))
-                    }
-            
-                    buffer.1 = Some(cx.waker().clone());
-                    return Poll::Pending
+                #[inline]
+                fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
+                    self.recv.poll_next_unpin(cx)
                 }
             }
             
@@ -140,8 +135,7 @@ macro_rules! impl_watch {
                         }
                     }
             
-                    let win = web_sys::window().unwrap();
-                    win.remove_event_listener_with_callback_and_bool($jsname, listener, true).unwrap();
+                    self.inner.remove_event_listener_with_callback($jsname, listener).unwrap();
                 }
             }
         )+
@@ -154,29 +148,28 @@ impl_watch! {
 }
 
 impl Battery {
-    pub fn battery_time_watcher (&self) -> Result<BatteryTimeWatcher> {
-        let buffer = Rc::new(WasmRefCell::new((VecDeque::new(), None::<Waker>)));
-            
-        let my_self = self.inner.clone();
-        let my_buffer = buffer.clone();
-        let charge = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
+    pub fn watch_battery_time (&self) -> Result<BatteryTimeWatcher> {
+        let (send, recv) = local_channel();
+
+        let my_send = send.clone();
+        let charge = Closure::<dyn FnMut(web_sys::Event)>::new(move |evt: web_sys::Event| {
+            let my_self = evt.current_target().unwrap();
+            debug_assert!(my_self.is_instance_of::<BatteryManager>());
+            let my_self = my_self.unchecked_into::<BatteryManager>();
+
             let value = my_self.charging_time();
             if value == f64::INFINITY { return }
-            
-            let mut my_buffer = my_buffer.borrow_mut();
-            my_buffer.0.push_back(BatteryTime::Charging(Duration::from_secs_f64(value)));
-            if let Some(waker) = my_buffer.1.take() { waker.wake() }
+            let _ = my_send.try_send(BatteryTime::Charging(Duration::from_secs_f64(value)));
         });
 
-        let my_self = self.inner.clone();
-        let my_buffer = buffer.clone();
-        let discharge = Closure::<dyn FnMut(web_sys::Event)>::new(move |_: web_sys::Event| {
-            let value = my_self.charging_time();
+        let discharge = Closure::<dyn FnMut(web_sys::Event)>::new(move |evt: web_sys::Event| {
+            let my_self = evt.current_target().unwrap();
+            debug_assert!(my_self.is_instance_of::<BatteryManager>());
+            let my_self = my_self.unchecked_into::<BatteryManager>();
+
+            let value = my_self.discharging_time();
             if value == f64::INFINITY { return }
-            
-            let mut my_buffer = my_buffer.borrow_mut();
-            my_buffer.0.push_back(BatteryTime::Discharging(Duration::from_secs_f64(value)));
-            if let Some(waker) = my_buffer.1.take() { waker.wake() }
+            let _ = send.try_send(BatteryTime::Discharging(Duration::from_secs_f64(value)));
         });
 
         let charge_listener: &js_sys::Function;
@@ -191,37 +184,33 @@ impl Battery {
             }
         }
 
-        let win = web_sys::window().unwrap();
-        win.add_event_listener_with_callback_and_bool("chargingtimechange", charge_listener, true)?;
-        win.add_event_listener_with_callback_and_bool("dischargingtimechange", discharge_listener, true)?;
+        self.inner.add_event_listener_with_callback("chargingtimechange", charge_listener)?;
+        self.inner.add_event_listener_with_callback("dischargingtimechange", discharge_listener)?;
 
         return Ok(BatteryTimeWatcher {
+            inner: self.inner.clone(),
             charge,
             discharge,
-            buffer
+            recv
         })
     }
 }
 
 pub struct BatteryTimeWatcher {
+    inner: BatteryManager,
     #[allow(unused)]
     charge: Closure<dyn FnMut(web_sys::Event)>,
     #[allow(unused)]
     discharge: Closure<dyn FnMut(web_sys::Event)>,
-    buffer: Rc<WasmRefCell<(VecDeque<BatteryTime>, Option<Waker>)>>,
+    recv: LocalReceiver<BatteryTime>
 }
 
 impl Stream for BatteryTimeWatcher {
     type Item = BatteryTime;
 
-    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut buffer = self.buffer.borrow_mut();
-        if let Some(geo) = buffer.0.pop_front() {
-            return Poll::Ready(Some(geo))
-        }
-
-        buffer.1 = Some(cx.waker().clone());
-        return Poll::Pending
+    #[inline]
+    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
+        self.recv.poll_next_unpin(cx)
     }
 }
 
@@ -240,9 +229,8 @@ impl Drop for BatteryTimeWatcher {
             }
         }
 
-        let win = web_sys::window().unwrap();
-        win.remove_event_listener_with_callback_and_bool("chargingtimechange", charge, true).unwrap();
-        win.remove_event_listener_with_callback_and_bool("dischargingtimechange", discharge, true).unwrap();
+        self.inner.remove_event_listener_with_callback("chargingtimechange", charge).unwrap();
+        self.inner.remove_event_listener_with_callback("dischargingtimechange", discharge).unwrap();
     }
 }
 

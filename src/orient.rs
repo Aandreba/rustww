@@ -2,7 +2,7 @@ use std::{rc::Rc, task::{Waker, Poll}, collections::VecDeque};
 use futures::{Stream};
 use wasm_bindgen::{prelude::Closure, __rt::WasmRefCell};
 use web_sys::{DeviceOrientationEvent, DeviceMotionEvent, DeviceAcceleration, DeviceRotationRate};
-use crate::{Result, utils::OneShot, math::Vec3d};
+use crate::{Result, utils::{one_shot}, math::Vec3d};
 use wasm_bindgen::JsCast;
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -32,7 +32,7 @@ pub struct Orientation {
 
 impl Orientation {
     pub async fn current () -> Result<Self> {
-        let (result, send) = OneShot::new();
+        let (send, result) = one_shot();
         let f = Closure::<dyn FnMut(DeviceOrientationEvent)>::new(move |evt: DeviceOrientationEvent| {
             send.try_send(Orientation::from(evt)).unwrap();
         });
@@ -155,7 +155,7 @@ cfg_if::cfg_if! {
                     wasm_bindgen_futures::spawn_local(fut);
                 });
 
-                let win = web_sys::window().unwrap();
+                let win = crate::window()?;
                 let listener = unsafe { syncable_wrapped_closure::<dyn Fn(DeviceOrientationEvent), _>(&closure) };
                 win.add_event_listener_with_callback_and_bool("deviceorientation", &listener, true)?;
         
@@ -206,7 +206,7 @@ pub struct Motion {
 
 impl Motion {
     pub async fn current () -> Result<Self> {
-        let (result, send) = OneShot::new();
+        let (send, result) = one_shot();
         let f = Closure::<dyn FnMut(DeviceMotionEvent)>::new(move |evt: DeviceMotionEvent| {
             send.try_send(Motion::from(evt)).unwrap();
         });
@@ -305,7 +305,7 @@ impl Drop for MotionWatcher {
 cfg_if::cfg_if! {
     if #[cfg(any(test, target_feature = "atomics"))] {
         pub struct SendMotionWatcher {
-            resolve: SyncableClosure<dyn FnMut(DeviceMotionEvent) + Send + Sync>,
+            resolve: SyncableClosure<dyn Fn(DeviceMotionEvent) + Send + Sync>,
             recv: async_channel::Receiver<Motion>
         }
         

@@ -1,7 +1,7 @@
 use std::time::Duration;
-use futures::{TryStreamExt, StreamExt};
-use rustww::{thread::spawn, notify::{Notification}, geo::Geolocation, orient::{Orientation, Motion}, math::*, battery::Battery};
-use wasm_bindgen::prelude::wasm_bindgen;
+use futures::{TryStreamExt, StreamExt, join};
+use rustww::{thread::{spawn, sleep}, notify::{Notification}, geo::Geolocation, orient::{Orientation, Motion}, math::*, battery::Battery};
+use wasm_bindgen::{prelude::wasm_bindgen, JsValue};
 
 #[wasm_bindgen]
 extern "C" {
@@ -80,8 +80,24 @@ fn test_motion () {
 
 fn test_battery () {
     wasm_bindgen_futures::spawn_local(async move {
-        let battery = Battery::new_snapshot().await;
-        log(&format!("{battery:?}"))
+        let battery = Battery::new().await.unwrap();
+        let mut level = battery.watch_charging().unwrap();
+
+        let alpha = async {
+            while let Some(level) = level.next().await {
+                log(&format!("{level:?}"));
+            }
+        };
+
+        let beta = async move {
+            loop {
+                sleep(Duration::from_secs(1)).await;
+                //let snapshot = battery.snapshot();
+                //log(&format!("{snapshot:?}"));
+            }
+        };
+
+        let _ = join! { alpha, beta };
     });
 }
 

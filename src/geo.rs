@@ -1,7 +1,8 @@
-use std::{rc::Rc, task::{Waker, Poll}, future::Future, collections::VecDeque};
+use std::{task::{Poll}, future::Future};
 use futures::{Stream, TryFutureExt};
-use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsCast, JsValue, __rt::WasmRefCell};
-use crate::{Result, utils::{OneShot}};
+use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsCast, JsValue};
+use crate::{Result, utils::{ShotReceiver, one_shot, LocalReceiver, local_channel}, window};
+use futures::StreamExt;
 
 #[wasm_bindgen]
 extern {
@@ -50,7 +51,7 @@ pub struct Geolocation {
 
 impl Geolocation {
     pub fn current () -> Result<CurrentGeolocation> {
-        let (inner, send) = OneShot::new();
+        let (send, inner) = one_shot();
 
         let my_result = send.clone();
         let resolve_closure = Closure::once(move |loc: GeolocationPosition| {
@@ -74,7 +75,7 @@ impl Geolocation {
             }
         }
 
-        let geo = web_sys::window().unwrap().navigator().geolocation()?;
+        let geo = window()?.navigator().geolocation()?;
         match geo.get_current_position_with_error_callback(resolve, Some(reject)) {
             Ok(_) => {
                 resolve_closure.forget();
@@ -102,65 +103,42 @@ pub struct GeolocationWatcher {
     id: i32,
     #[allow(unused)]
     success: Closure<dyn FnMut(GeolocationPosition)>,
-    #[allow(unused)]
-    failure: Closure<dyn FnMut(JsValue)>,
-    buffer: Rc<WasmRefCell<(VecDeque<Result<Geolocation>>, Option<Waker>)>>,
+    recv: LocalReceiver<Geolocation>
 }
 
 impl GeolocationWatcher {
     #[inline]
     pub fn new () -> Result<Self> {
-        let buffer = Rc::new(WasmRefCell::new((VecDeque::new(), None::<Waker>)));
-
-        let my_buffer = buffer.clone();
+        let (send, recv) = local_channel();
         let success = Closure::<dyn FnMut(GeolocationPosition)>::new(move |loc: GeolocationPosition| {
-            let geo = Geolocation::from(loc);
-            let mut my_buffer = my_buffer.borrow_mut();
-            my_buffer.0.push_back(Ok(geo));
-            if let Some(waker) = my_buffer.1.take() { waker.wake() }
-        });
-
-        let my_buffer = buffer.clone();
-        let failure = Closure::<dyn FnMut(JsValue)>::new(move |err: JsValue| {
-            let mut my_buffer = my_buffer.borrow_mut();
-            my_buffer.0.push_back(Err(err));
-            if let Some(waker) = my_buffer.1.take() { waker.wake() }
+            let _ = send.try_send(Geolocation::from(loc));
         });
 
         let resolve: &js_sys::Function;
-        let reject: &js_sys::Function;
         cfg_if::cfg_if! {
             if #[cfg(debug_assertions)] {
                 resolve = success.as_ref().dyn_ref().unwrap();
-                reject = failure.as_ref().dyn_ref().unwrap();
             } else {
                 resolve = success.as_ref().unchecked_ref();
-                reject = failure.as_ref().unchecked_ref();
             }
         }
 
-        let geo = web_sys::window().unwrap().navigator().geolocation()?;
-        let id = geo.watch_position_with_error_callback(resolve, Some(reject))?;
+        let geo = window()?.navigator().geolocation()?;
+        let id = geo.watch_position(resolve)?;
         return Ok(Self {
             id,
             success,
-            failure,
-            buffer,
+            recv,
         })
     }
 }
 
 impl Stream for GeolocationWatcher {
-    type Item = Result<Geolocation>;
+    type Item = Geolocation;
 
-    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut buffer = self.buffer.borrow_mut();
-        if let Some(geo) = buffer.0.pop_front() {
-            return Poll::Ready(Some(geo))
-        }
-
-        buffer.1 = Some(cx.waker().clone());
-        return Poll::Pending
+    #[inline]
+    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
+        self.recv.poll_next_unpin(cx)
     }
 }
 
@@ -174,7 +152,6 @@ impl Drop for GeolocationWatcher {
 
 cfg_if::cfg_if! {
     if #[cfg(any(test, target_feature = "atomics"))] {
-        use futures::StreamExt;
         use crate::send::{syncable_wrapped_closure, SyncableClosure};
 
         #[cfg_attr(docsrs, doc(cfg(target_feature = "atomics")))]
@@ -263,7 +240,7 @@ impl From<GeolocationPosition> for Geolocation {
 }
 
 pub struct CurrentGeolocation {
-    inner: OneShot<Result<GeolocationPosition>>
+    inner: ShotReceiver<Result<GeolocationPosition>>
 }
 
 impl Future for CurrentGeolocation {

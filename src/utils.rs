@@ -1,7 +1,8 @@
 #![allow(unused)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use std::{cell::{UnsafeCell, Cell}, mem::{MaybeUninit}, rc::{Rc}, task::{Waker, Poll}, future::Future, ops::{Deref, DerefMut}};
+use std::{cell::{UnsafeCell, Cell}, mem::{MaybeUninit}, rc::{Rc, Weak}, task::{Waker, Poll}, future::Future, ops::{Deref, DerefMut}, collections::VecDeque, fmt::Debug};
+use futures::Stream;
 use utils_atomics::{flag::{AsyncFlag, AsyncSubscribe}, TakeCell};
 use wasm_bindgen::__rt::WasmRefCell;
 
@@ -128,67 +129,133 @@ impl<T> OnceCell<T> {
 unsafe impl<T: Send> Send for OnceCell<T> {}
 unsafe impl<T: Sync> Sync for OnceCell<T> {}
 
-pub struct OneShot<T> {
-    pub(crate) inner: Option<Rc<FutureInner<T>>>
+struct ChannelInner<T> {
+    buffer: VecDeque<T>,
+    waker: Option<Waker>
 }
 
-impl<T> OneShot<T> {
+pub struct LocalReceiver<T> {
+    inner: Rc<WasmRefCell<ChannelInner<T>>>
+}
+
+impl<T> Stream for LocalReceiver<T> {
+    type Item = T;
+
     #[inline]
-    pub(crate) fn new () -> (Self, Sender<T>) {
-        let inner = Rc::new(FutureInner::default());
-        return (Self {
-            inner: Some(inner.clone())
-        }, Sender { inner })
+    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
+        let mut inner = self.inner.borrow_mut();
+
+        if let Some(value) = inner.buffer.pop_front() {
+            return Poll::Ready(Some(value))
+        } else if Rc::weak_count(&self.inner) == 0 {
+            return Poll::Ready(None)
+        }
+
+        inner.waker = Some(cx.waker().clone());
+        return Poll::Pending
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let inner = self.inner.borrow();
+        let size = inner.buffer.len();
+
+        if Rc::weak_count(&self.inner) == 0 {
+            return (size, Some(size))
+        } else {
+            return (size, None)
+        }
     }
 }
 
-impl<T> Future for OneShot<T> {
-    type Output = T;
+pub struct LocalSender<T> {
+    inner: Weak<WasmRefCell<ChannelInner<T>>>
+}
 
-    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
-        if let Some(ref mut inner) = self.inner {
-            if let Some(geo) = inner.value.take() {
-                self.inner = None;
-                return Poll::Ready(geo);
-            }
+impl<T> LocalSender<T> {
+    #[inline]
+    pub fn send (&self, v: T) where T: Debug {
+        self.try_send(v).unwrap()
+    }
     
-            inner.waker.set(Some(cx.waker().clone()));
-            return Poll::Pending
-        }
-
-        panic!("Value already extracted")
-    }
-}
-
-pub struct Sender<T> {
-    inner: Rc<FutureInner<T>>
-}
-
-impl<T> Sender<T> {
     #[inline]
-    pub fn try_send (&self, v: T) -> Result<(), T> {
-        if self.inner.sent.get() { return Err(v) }
-
-        self.inner.sent.set(true);
-        self.inner.value.set(Some(v));
-
-        if let Some(waker) = self.inner.waker.take() {
-            waker.wake();
+    pub fn try_send (&self, v: T) -> ::core::result::Result<(), T> {
+        if let Some(inner) = self.inner.upgrade() {
+            let mut inner = inner.borrow_mut();
+            inner.buffer.push_back(v);
+            if let Some(waker) = inner.waker.take() { waker.wake() }
+            return Ok(())
         }
-
-        return Ok(())
+        return Err(v)
     }
 }
 
-impl<T> Clone for Sender<T> {
+impl<T> Clone for LocalSender<T> {
     #[inline]
     fn clone(&self) -> Self {
         Self { inner: self.inner.clone() }
     }
 }
 
+#[inline]
+pub fn local_channel<T> () -> (LocalSender<T>, LocalReceiver<T>) {
+    let inner = Rc::new(WasmRefCell::new(ChannelInner {
+        buffer: VecDeque::new(),
+        waker: None
+    }));
+
+    return (LocalSender { inner: Rc::downgrade(&inner) }, LocalReceiver { inner });
+}
+
+pub struct ShotReceiver<T> {
+    pub(crate) inner: Rc<FutureInner<T>>
+}
+
+impl<T> Future for ShotReceiver<T> {
+    type Output = T;
+
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        if let Some(geo) = self.inner.value.take() {
+            return Poll::Ready(geo);
+        }
+
+        self.inner.waker.set(Some(cx.waker().clone()));
+        return Poll::Pending
+    }
+}
+
+pub struct ShotSender<T> {
+    inner: Weak<FutureInner<T>>
+}
+
+impl<T> ShotSender<T> {
+    #[inline]
+    pub fn try_send (&self, v: T) -> Result<(), T> {
+        if let Some(inner) = self.inner.upgrade() {    
+            inner.value.set(Some(v));
+            if let Some(waker) = inner.waker.take() {
+                waker.wake();
+            }
+            return Ok(())
+        }
+        return Err(v)
+    }
+}
+
+impl<T> Clone for ShotSender<T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self { inner: self.inner.clone() }
+    }
+}
+
+#[inline]
+pub(crate) fn one_shot<T> () -> (ShotSender<T>, ShotReceiver<T>) {
+    let inner = Rc::new(FutureInner::default());
+    return (ShotSender { inner: Rc::downgrade(&inner) }, ShotReceiver { inner })
+}
+
 pub(crate) struct FutureInner<T> {
-    pub(crate) sent: Cell<bool>,
     pub(crate) value: Cell<Option<T>>,
     pub(crate) waker: Cell<Option<Waker>>
 }
@@ -197,7 +264,6 @@ impl<T> Default for FutureInner<T> {
     #[inline]
     fn default() -> Self {
         Self {
-            sent: Cell::new(false),
             value: Default::default(),
             waker: Default::default()
         }
