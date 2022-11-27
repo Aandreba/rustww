@@ -1,7 +1,9 @@
 use std::time::Duration;
-use futures::{TryStreamExt, StreamExt, join};
-use rustww::{thread::{spawn, sleep}, notify::{Notification}, geo::Geolocation, orient::{Orientation, Motion}, math::*, battery::Battery};
-use wasm_bindgen::{prelude::wasm_bindgen, JsValue};
+use futures::{TryStreamExt, StreamExt, join, AsyncReadExt};
+use rustww::{thread::{spawn, sleep}, notify::{Notification}, geo::Geolocation, orient::{Orientation, Motion}, math::*, battery::Battery, io::{JsReadStream, Request}};
+use wasm_bindgen::{prelude::wasm_bindgen, JsValue, JsCast};
+use wasm_bindgen_futures::JsFuture;
+use web_sys::{window, Response, Blob};
 
 #[wasm_bindgen]
 extern "C" {
@@ -16,7 +18,7 @@ pub fn main () {
 
 #[wasm_bindgen]
 pub fn runner () {
-    test_battery();
+    test_fetch_and_read();
 }
 
 fn test_thread () {
@@ -91,7 +93,7 @@ fn test_battery () {
 
         let beta = async move {
             loop {
-                sleep(Duration::from_secs(1)).await;
+                // sleep(Duration::from_secs(1)).await;
                 //let snapshot = battery.snapshot();
                 //log(&format!("{snapshot:?}"));
             }
@@ -110,4 +112,14 @@ fn test_math () {
 
     let vec4 = Vec4d::new(1., 2., 3., 4.);
     log(&format!("{} = 30", vec4 * vec4));
+}
+
+fn test_fetch_and_read () {
+    wasm_bindgen_futures::spawn_local(async move {
+        let fetch = Request::get("index.html").await.unwrap();
+        //let text = fetch.body().unwrap().unwrap().read_remaining().await.unwrap();
+        //let text = String::from_utf8(text).unwrap();
+        let text = fetch.text().await.unwrap();
+        text.split('\n').for_each(log);
+    });
 }

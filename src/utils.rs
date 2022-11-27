@@ -1,8 +1,9 @@
 #![allow(unused)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use std::{cell::{UnsafeCell, Cell}, mem::{MaybeUninit}, rc::{Rc, Weak}, task::{Waker, Poll}, future::Future, ops::{Deref, DerefMut}, collections::VecDeque, fmt::Debug};
-use futures::Stream;
+use std::{cell::{UnsafeCell, Cell}, mem::{MaybeUninit}, rc::{Rc, Weak}, task::{Waker, Poll, Context}, future::Future, ops::{Deref, DerefMut}, collections::VecDeque, fmt::{Debug, Display}, pin::Pin, io::ErrorKind};
+use futures::{Stream, AsyncRead};
+use serde::Deserialize;
 use utils_atomics::{flag::{AsyncFlag, AsyncSubscribe}, TakeCell};
 use wasm_bindgen::__rt::WasmRefCell;
 
@@ -268,4 +269,17 @@ impl<T> Default for FutureInner<T> {
             waker: Default::default()
         }
     }
+}
+
+#[derive(Debug)]
+struct BlockError;
+
+impl Display for BlockError {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&ErrorKind::WouldBlock, f)
+    }
+}
+
+impl std::error::Error for BlockError {
 }

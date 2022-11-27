@@ -4,9 +4,6 @@ use wasm_bindgen::{prelude::wasm_bindgen, JsValue, JsCast};
 use web_sys::BatteryManager;
 use crate::{Result, window};
 use wasm_bindgen::closure::Closure;
-use std::collections::VecDeque;
-use wasm_bindgen::__rt::WasmRefCell;
-use std::rc::Rc;
 use std::task::*;
 use futures::Stream;
 use futures::StreamExt;
@@ -250,7 +247,7 @@ pub struct Snapshot {
 impl Snapshot {
     #[inline]
     pub async fn new () -> Result<Self> {
-        let nav = web_sys::window().unwrap().navigator();
+        let nav = window()?.navigator();
         let value = get_battery(&nav).await?;
 
         let manager: web_sys::BatteryManager;

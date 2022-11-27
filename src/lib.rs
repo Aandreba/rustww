@@ -1,4 +1,4 @@
-#![feature(new_uninit, ptr_metadata, is_some_and, iter_intersperse, const_fn_floating_point_arithmetic, concat_idents, const_trait_impl, core_intrinsics)]
+#![feature(new_uninit, ptr_metadata, is_some_and, iter_intersperse, io_error_other, type_alias_impl_trait, const_fn_floating_point_arithmetic, concat_idents, const_trait_impl, core_intrinsics)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[allow(unused)]
@@ -30,7 +30,7 @@ macro_rules! flat_mod {
 pub(crate) type Result<T> = ::core::result::Result<T, ::wasm_bindgen::JsValue>;
 
 #[doc(hidden)]
-extern crate wasm_thread;
+pub extern crate wasm_thread;
 
 /// Web Worker threads (from the [`wasm_thread`](https://github.com/chemicstry/wasm_thread) crate).
 #[docfg::docfg(target_feature = "atomics")]
@@ -53,6 +53,12 @@ pub mod orient;
 
 /// Battery API
 pub mod battery;
+
+/// File API
+pub mod fs;
+
+/// Input-Output
+pub mod io;
 
 /// Sendable
 pub mod send;
