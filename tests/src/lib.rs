@@ -1,6 +1,6 @@
 use std::time::Duration;
 use futures::{TryStreamExt, StreamExt, join, AsyncReadExt};
-use rustww::{thread::{spawn, sleep}, notify::{Notification}, geo::Geolocation, orient::{Orientation, Motion}, math::*, battery::Battery, io::{JsReadStream, Request}};
+use rustww::{notify::{Notification}, geo::Geolocation, orient::{Orientation, Motion}, math::*, battery::Battery, io::{JsReadStream, Request, JsReadByteStream}};
 use wasm_bindgen::{prelude::wasm_bindgen, JsValue, JsCast};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{window, Response, Blob};
@@ -18,9 +18,10 @@ pub fn main () {
 
 #[wasm_bindgen]
 pub fn runner () {
-    test_fetch_and_read();
+    test_read_custom();
 }
 
+#[cfg(target_feature = "atomics")]
 fn test_thread () {
     spawn(move || {
         log("Hello world!");
@@ -44,10 +45,10 @@ fn test_geo () {
             log(&format!("{geo:?}"));
         }*/
 
-        let mut watch = Geolocation::watch_send().unwrap();
+        /*let mut watch = Geolocation::watch_send().unwrap();
         while let Some(geo) = watch.next().await {
             log(&format!("{geo:?}"));
-        }
+        }*/
     });
 }
 
@@ -61,10 +62,10 @@ fn test_orientation () {
             log(&format!("{geo:?}"));
         }*/
 
-        let mut watch = Orientation::watch_send().unwrap().take(100);
+        /*let mut watch = Orientation::watch_send().unwrap().take(100);
         while let Some(geo) = watch.next().await {
             log(&format!("{geo:?}"));
-        }
+        }*/
     });
 }
 
@@ -112,6 +113,21 @@ fn test_math () {
 
     let vec4 = Vec4d::new(1., 2., 3., 4.);
     log(&format!("{} = 30", vec4 * vec4));
+}
+
+#[cfg(web_sys_unstable_apis)]
+fn test_read_custom () {
+    use js_sys::Uint8Array;
+    use rustww::time::{sleep, spawn_interval};
+
+    let bytes = vec![1u8, 2, 3, 4, 5]; 
+    let mut reader = JsReadByteStream::from_reader(bytes.as_slice()).unwrap();
+
+    wasm_bindgen_futures::spawn_local(async move {
+        let mut byte = vec![1];
+        reader.read_chunk(&mut byte).await.unwrap();
+        ::web_sys::console::log_1(&JsValue::from(byte[0]));
+    });
 }
 
 fn test_fetch_and_read () {

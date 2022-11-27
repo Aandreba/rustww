@@ -41,8 +41,8 @@ impl<T> Interval<T> {
     }
 
     #[inline]
-    pub fn leak (self) {
-        core::mem::forget(self)
+    pub fn leak (this: Self) {
+        core::mem::forget(this)
     }
 
     #[inline]
@@ -85,7 +85,7 @@ impl<T> Drop for Interval<T> {
 
 #[inline]
 pub fn spawn_interval<F: 'static + FnMut()> (timeout: Duration, f: F) -> Result<()> {
-    let _ = Interval::new(timeout, f)?.leak();
+    let _ = Interval::leak(Interval::new(timeout, f)?);
     return Ok(())
 }
 

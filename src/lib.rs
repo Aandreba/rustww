@@ -1,4 +1,4 @@
-#![feature(new_uninit, ptr_metadata, is_some_and, iter_intersperse, io_error_other, type_alias_impl_trait, const_fn_floating_point_arithmetic, concat_idents, const_trait_impl, core_intrinsics)]
+#![feature(new_uninit, ptr_metadata, is_some_and, unboxed_closures, iter_intersperse, io_error_other, type_alias_impl_trait, const_fn_floating_point_arithmetic, concat_idents, const_trait_impl, core_intrinsics)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[allow(unused)]
@@ -59,6 +59,9 @@ pub mod fs;
 
 /// Input-Output
 pub mod io;
+
+/// Local Storage
+pub mod storage;
 
 /// Sendable
 pub mod send;

@@ -12,7 +12,7 @@ rustww = { path = "../" }
 console_error_panic_hook = { version = "0.1.6" }
 wasm-bindgen-futures = "0.4.33"
 wasm-bindgen = "0.2.83"
-web-sys = { version = "0.3.60", features = ["console", "Response"] }
+web-sys = { version = "0.3.60", features = ["console", "Response", "ReadableByteStreamController", "ReadableStreamDefaultController"] }
 futures = "0.3.25"
 js-sys = "0.3.60"
 

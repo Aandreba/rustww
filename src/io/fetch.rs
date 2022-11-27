@@ -1,4 +1,5 @@
 use std::{rc::Rc, sync::Arc, fmt::Debug};
+use js_sys::Uint8Array;
 use serde::{de::DeserializeOwned};
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen, JsCast};
 use wasm_bindgen_futures::JsFuture;
@@ -208,9 +209,16 @@ pub struct Response {
 
 impl Response {
     #[inline]
-    pub fn body (&self) -> Result<Option<JsReadStream>> {
-        let inner = self.inner.clone()?;
-        return inner.body().map(JsReadStream::new).transpose()
+    pub fn body (self) -> Result<Option<JsReadStream>> {
+        return self.inner.body().map(JsReadStream::new).transpose()
+    }
+
+    #[inline]
+    pub fn try_body (self) -> Result<::core::result::Result<JsReadStream, Self>> {
+        return match self.inner.body() {
+            Some(x) => JsReadStream::new(x).map(Ok),
+            None => Ok(Err(self))
+        }
     }
 
     #[inline]
@@ -233,33 +241,53 @@ impl Response {
         self.inner.redirected()
     }
 
-    pub async fn text (&self) -> Result<String> {
-        if let Some(mut body) = self.body()? {
-            let bytes = body.read_remaining().await?;
-            return match String::from_utf8(bytes) {
-                Ok(string) => Ok(string),
-                Err(e) => Err(JsValue::from_str(&e.to_string()))
+    pub async fn bytes (self) -> Result<Vec<u8>> {
+        return match self.try_body()? {
+            Ok(mut body) => body.read_remaining().await,
+            Err(this) => {
+                let value = JsFuture::from(this.inner.array_buffer()?).await?;
+                let buffer = value.unchecked_into::<js_sys::ArrayBuffer>();
+                let bytes = Uint8Array::new_with_byte_offset_and_length(&buffer, 0, buffer.byte_length());
+                Ok(bytes.to_vec())
             }
         }
-        
-        let text = JsFuture::from(self.inner.text()?).await?;
-        debug_assert!(text.is_instance_of::<js_sys::JsString>());
-        let text = text.unchecked_into::<js_sys::JsString>();
-        return Ok(ToString::to_string(&text))
     }
 
-    pub async fn json<T: DeserializeOwned> (&self) -> Result<T> {
-        if let Some(mut body) = self.body()? {
-            let bytes = body.read_remaining().await?;
-            return match serde_json::from_slice::<T>(&bytes) {
-                Ok(json) => Ok(json),
-                Err(e) => Err(JsValue::from_str(&e.to_string()))
+    pub async fn text (self) -> Result<String> {
+        return match self.try_body()? {
+            Ok(mut body) => {
+                let bytes = body.read_remaining().await?;
+                match String::from_utf8(bytes) {
+                    Ok(string) => Ok(string),
+                    Err(e) => Err(JsValue::from_str(&e.to_string()))
+                }
+            },
+
+            Err(this) => {
+                let text = JsFuture::from(this.inner.text()?).await?;
+                debug_assert!(text.is_instance_of::<js_sys::JsString>());
+                let text = text.unchecked_into::<js_sys::JsString>();
+                Ok(ToString::to_string(&text))
             }
         }
+    }
 
-        let json = JsFuture::from(self.inner.json()?).await?;
-        let v = serde_wasm_bindgen::from_value::<T>(json)?;
-        return Ok(v)
+    pub async fn json<T: DeserializeOwned> (self) -> Result<T> {
+        return match self.try_body()? {
+            Ok(mut body) => {
+                let bytes = body.read_remaining().await?;
+                match serde_json::from_slice::<T>(&bytes) {
+                    Ok(json) => Ok(json),
+                    Err(e) => Err(JsValue::from_str(&e.to_string()))
+                }
+            },
+
+            Err(this) => {
+                let json = JsFuture::from(this.inner.json()?).await?;
+                let v = serde_wasm_bindgen::from_value::<T>(json)?;
+                Ok(v)
+            }
+        }
     }
 }
 
