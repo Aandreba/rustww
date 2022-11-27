@@ -1,6 +1,5 @@
 use std::{rc::Rc, sync::Arc, fmt::Debug};
-use futures::AsyncReadExt;
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned};
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen, JsCast};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{RequestInit, RequestCache, RequestCredentials, Headers, RequestMode, RequestRedirect, ReferrerPolicy};
@@ -210,7 +209,8 @@ pub struct Response {
 impl Response {
     #[inline]
     pub fn body (&self) -> Result<Option<JsReadStream>> {
-        return self.inner.body().map(JsReadStream::new).transpose()
+        let inner = self.inner.clone()?;
+        return inner.body().map(JsReadStream::new).transpose()
     }
 
     #[inline]
@@ -267,5 +267,12 @@ impl Debug for Response {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         return write!(f, "{} {}", self.inner.status(), self.inner.status_text())
+    }
+}
+
+impl Clone for Response {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self { inner: self.inner.clone().unwrap() }
     }
 }
