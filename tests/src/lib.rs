@@ -117,16 +117,17 @@ fn test_math () {
 
 #[cfg(web_sys_unstable_apis)]
 fn test_read_custom () {
+    use futures::io::{BufReader, Cursor};
     use js_sys::Uint8Array;
     use rustww::time::{sleep, spawn_interval};
 
     let bytes = vec![1u8, 2, 3, 4, 5]; 
-    let mut reader = JsReadByteStream::from_reader(bytes.as_slice()).unwrap();
+    let mut reader = JsReadByteStream::from_bytes(bytes).unwrap();
 
     wasm_bindgen_futures::spawn_local(async move {
-        let mut byte = vec![1];
+        let mut byte = vec![0; 3];
         reader.read_chunk(&mut byte).await.unwrap();
-        ::web_sys::console::log_1(&JsValue::from(byte[0]));
+        unsafe { ::web_sys::console::log_1(&Uint8Array::from(byte.as_slice())) };
     });
 }
 

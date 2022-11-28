@@ -1,7 +1,7 @@
-use std::{task::Poll, io::ErrorKind, future::poll_fn, rc::Rc};
+use std::{task::Poll, io::ErrorKind, future::poll_fn, cell::Cell, rc::Rc, ops::AddAssign, pin::Pin};
 use docfg::docfg;
 use futures::{AsyncRead, Future, TryFutureExt, FutureExt};
-use js_sys::Uint8Array;
+use js_sys::{Uint8Array};
 use wasm_bindgen::{JsCast, JsValue, prelude::{wasm_bindgen}, __rt::WasmRefCell};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{ReadableStreamGetReaderOptions, ReadableStreamReaderMode};
@@ -13,16 +13,8 @@ extern "C" {
     #[derive(Debug, Clone)]
     type ByteArray;
 
-    #[cfg(web_sys_unstable_apis)]
-    #[wasm_bindgen(js_name = ReadableStreamBYOBRequest , typescript_type = "ReadableStreamBYOBRequest", extends = web_sys::ReadableStreamByobRequest)]
-    type ExtendedReadableStreamByobRequest;
-
     #[wasm_bindgen(method)]
     fn subarray(this: &ByteArray, begin: u32) -> ByteArray;
-
-    #[cfg(web_sys_unstable_apis)]
-    #[wasm_bindgen(method, js_name = view)]
-    fn view_ptr(this: &ByteArray) -> *mut u8;
 }
 
 /// Trait that represents a type that wraps a JavaScript [`ReadableStream`](web_sys::ReadableStream)
@@ -48,6 +40,41 @@ impl JsReadStream {
     pub fn custom () -> super::builder::ReadBuilder {
         return super::builder::ReadBuilder::new()
     }
+
+    #[docfg(web_sys_unstable_apis)]
+    pub fn from_reader<R: 'static + AsyncRead + Unpin> (mut read: R, chunk_size: Option<usize>) -> Result<Self> {
+        let start = move |con: web_sys::ReadableStreamDefaultController| {
+            wasm_bindgen_futures::spawn_local(async move {
+                let chunk_size = chunk_size
+                    .or_else(|| con.desired_size().map(|x| x as usize))
+                    .unwrap_or(1024);
+
+                let mut chunks = unsafe {
+                    Box::<[u8]>::new_zeroed_slice(chunk_size).assume_init()
+                };
+
+                loop {
+                    match poll_fn(|cx| Pin::new(&mut read).poll_read(cx, &mut chunks)).await {
+                        Ok(0) => break,
+                        Ok(len) => match con.enqueue_with_chunk(&Uint8Array::from(&chunks[..len])) {
+                            Ok(_) => {},
+                            Err(e) => con.error_with_e(&e)
+                        },
+                        Err(e) => con.error_with_e(&JsValue::from_str(&format!("{e}")))
+                    }
+                }
+
+                con.close();
+            });
+
+            Ok(())
+        };
+
+        return Self::custom()
+            .start(start)
+            .build();
+    }
+
 
     #[inline]
     pub fn new<T: Into<web_sys::ReadableStream>> (stream: T) -> Result<Self> {
@@ -199,37 +226,31 @@ impl JsReadByteStream {
     }
 
     #[docfg(web_sys_unstable_apis)]
-    //#[cfg(not(target_feature = "atomics"))]
-    pub fn from_reader<R: AsyncRead> (read: R) -> Result<Self> {
-        let read = Rc::new(WasmRefCell::new(read));
+    pub fn from_bytes (bytes: Vec<u8>) -> Result<Self> {
+        let mut offset = Cell::new(0);
 
-        let my_read = read.clone();
-        let start = move |con: web_sys::ReadableByteStreamController| {
-            Ok(())
-        };
-
-        let my_read = read.clone();
-        let pull = move |con: web_sys::ReadableByteStreamController| async move {
-            ::web_sys::console::log_1(&con);
-
+        let pull = move |con: web_sys::ReadableByteStreamController| {
             if let Some(req) = con.byob_request() {
-                let req = req.unchecked_into::<ExtendedReadableStreamByobRequest>();
-                ::web_sys::console::log_1(&req);
-
                 if let Some(view) = req.view() {
-                    ::web_sys::console::log_1(&view);
+                    let view = view.unchecked_into::<Uint8Array>();
+
+                    let len = view.byte_length() as usize;
+                    let new_offset = offset.get() + len;
+
+                    view.copy_from(&bytes.as_slice()[offset.get()..new_offset]);
+                    offset.set(new_offset);
+                    return req.respond_with_u32(len as u32);
                 }
-                
-                todo!()
+    
+                return req.respond_with_u32(0);
             }
 
-            Ok(())
+            todo!()
         };
 
         return Self::custom()
-            .start(start)
-            .pull_async(pull)
-            .build();
+            .pull(pull)
+            .build()
     }
 
     #[inline]
@@ -267,10 +288,17 @@ impl JsReadByteStream {
         return Ok(Self { stream: this, reader: inner, #[cfg(web_sys_unstable_apis)] _builder: None, err: None })
     }
 
+    // TODO FIX
     #[inline]
     pub async fn read_chunk (&mut self, buf: &mut [u8]) -> Result<()> {
         if buf.len() == 0 { return Ok(()) }
         JsFuture::from(self.reader.read_with_u8_array(buf)).await?;
+        return Ok(())
+    }
+
+    #[inline]
+    pub async fn read_chunk_into_buffer (&mut self, buf: &js_sys::Object) -> Result<()> {
+        JsFuture::from(self.reader.read_with_array_buffer_view(&buf)).await?;
         return Ok(())
     }
 }
