@@ -1,11 +1,12 @@
-use std::{task::Poll, io::ErrorKind, future::poll_fn, cell::Cell, rc::Rc, ops::AddAssign, pin::Pin};
+use std::{task::{Poll, Waker}, cell::Cell};
 use docfg::docfg;
-use futures::{AsyncRead, Future, TryFutureExt, FutureExt};
+use futures::{Future, TryFutureExt, FutureExt, Stream, TryStreamExt};
 use js_sys::{Uint8Array};
-use wasm_bindgen::{JsCast, JsValue, prelude::{wasm_bindgen}, __rt::WasmRefCell};
+use wasm_bindgen::{JsCast, JsValue, prelude::{wasm_bindgen}};
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{ReadableStreamGetReaderOptions, ReadableStreamReaderMode};
+use web_sys::ReadableStream;
 use crate::Result;
+use super::IntoFetchBody;
 
 #[wasm_bindgen]
 extern "C" {
@@ -17,21 +18,15 @@ extern "C" {
     fn subarray(this: &ByteArray, begin: u32) -> ByteArray;
 }
 
-/// Trait that represents a type that wraps a JavaScript [`ReadableStream`](web_sys::ReadableStream)
-pub trait AsJsReadStream: AsyncRead {
-    fn as_stream (&self) -> &web_sys::ReadableStream;
-}
-
 /// A rustfull wrapper arround a JavaScript [`ReadableStream`](web_sys::ReadableStream)
 pub struct JsReadStream {
     #[allow(unused)]
     stream: web_sys::ReadableStream,
-    reader: web_sys::ReadableStreamDefaultReader,
+    reader: Option<web_sys::ReadableStreamDefaultReader>,
     #[cfg(web_sys_unstable_apis)]
     pub(super) _builder: Option<super::builder::ReadBuilder>,
-    buff: Option<ByteArray>,
-    err: Option<JsValue>,
-    current: NextChunk
+    current: Option<NextChunk>,
+    done: bool
 }
 
 impl JsReadStream {   
@@ -41,50 +36,10 @@ impl JsReadStream {
         return super::builder::ReadBuilder::new()
     }
 
-    #[docfg(web_sys_unstable_apis)]
-    pub fn from_reader<R: 'static + AsyncRead + Unpin> (mut read: R, chunk_size: Option<usize>) -> Result<Self> {
-        let start = move |con: web_sys::ReadableStreamDefaultController| {
-            wasm_bindgen_futures::spawn_local(async move {
-                let chunk_size = chunk_size
-                    .or_else(|| con.desired_size().map(|x| x as usize))
-                    .unwrap_or(1024);
-
-                let mut chunks = unsafe {
-                    Box::<[u8]>::new_zeroed_slice(chunk_size).assume_init()
-                };
-
-                loop {
-                    match poll_fn(|cx| Pin::new(&mut read).poll_read(cx, &mut chunks)).await {
-                        Ok(0) => break,
-                        Ok(len) => match con.enqueue_with_chunk(&Uint8Array::from(&chunks[..len])) {
-                            Ok(_) => {},
-                            Err(e) => con.error_with_e(&e)
-                        },
-                        Err(e) => con.error_with_e(&JsValue::from_str(&format!("{e}")))
-                    }
-                }
-
-                con.close();
-            });
-
-            Ok(())
-        };
-
-        return Self::custom()
-            .start(start)
-            .build();
-    }
-
-
     #[inline]
     pub fn new<T: Into<web_sys::ReadableStream>> (stream: T) -> Result<Self> {
         let stream = <T as Into<web_sys::ReadableStream>>::into(stream);
-        let inner = stream.get_reader();
-        debug_assert!(inner.is_instance_of::<web_sys::ReadableStreamDefaultReader>());
-        let inner = inner.unchecked_into::<web_sys::ReadableStreamDefaultReader>();
-
-        let current = NextChunk { future: JsFuture::from(inner.read()) };
-        return Ok(Self { stream, reader: inner, #[cfg(web_sys_unstable_apis)] _builder: None, err: None, buff: None, current })
+        return Ok(Self { stream, reader: None, #[cfg(web_sys_unstable_apis)] _builder: None, current: None, done: false })
     }
     
     pub fn from_mut (stream: &mut web_sys::ReadableStream) -> Result<Self> {
@@ -98,116 +53,98 @@ impl JsReadStream {
         debug_assert!(this.is_instance_of::<web_sys::ReadableStream>());
         let this = this.unchecked_into::<web_sys::ReadableStream>();
 
-        let inner = this.get_reader();
-        debug_assert!(inner.is_instance_of::<web_sys::ReadableStreamDefaultReader>());
-        let inner = inner.unchecked_into::<web_sys::ReadableStreamDefaultReader>();
-        
-        let current = NextChunk { future: JsFuture::from(inner.read()) };
-        return Ok(Self { stream: this, reader: inner, #[cfg(web_sys_unstable_apis)] _builder: None, err: None, buff: None, current })
+        return Ok(Self { stream: this, reader: None, #[cfg(web_sys_unstable_apis)] _builder: None, current: None, done: false })
     }
-
-    #[inline]
-    fn next_chunk (&mut self) -> NextChunk {
-        let future = JsFuture::from(self.reader.read());
-        return NextChunk { future }
-    }
-
+    
     pub async fn read_remaining (&mut self) -> Result<Vec<u8>> {
-        let mut result = match self.buff {
-            Some(ref x) => x.to_vec(),
-            None => Vec::new()
-        };
-
-        loop {
-            let ChunkResult { done, value } = poll_fn(|cx| self.current.poll_unpin(cx)).await?;
-            if done || value.is_undefined() {
-                break
-            }
-            
-            self.current = self.next_chunk();
-            let len = value.byte_length() as usize;
+        let mut result = Vec::<u8>::new();
+        while let Some(chunk) = self.try_next().await? {
+            let len = chunk.length() as usize;
             result.reserve(len);
-
             unsafe {
-                value.raw_copy_to_ptr(result.as_mut_ptr().add(result.len()));
-                result.set_len(result.len() + len)
+                chunk.raw_copy_to_ptr(result.as_mut_ptr().add(result.len()));
+                result.set_len(result.len() + len);
             }
         }
 
         return Ok(result)
     }
 
-    #[inline]
-    pub fn latest_error (&self) -> Option<&JsValue> {
-        return self.err.as_ref()
-    }
-}
-
-impl AsyncRead for JsReadStream {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        mut buf: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        let mut offset = 0;
-
-        loop {
-            /* BUFFER */
-            if let Some(ref mut self_buf) = self.buff {
-                let len = u32::min(self_buf.length(), u32::try_from(buf.len()).unwrap_or(u32::MAX));
-                let len_usize = len as usize;
-    
-                Uint8Array::subarray(self_buf, 0, len).copy_to(&mut buf[..len_usize]);
-                *self_buf = self_buf.subarray(len);
-    
-                offset += len_usize;
-                if self_buf.length() > 0 {
-                    break;
-                }
-
-                buf = &mut buf[len_usize..];
-                self.buff = None
-            }
-    
-            /* PROMISE */
-            match self.current.poll_unpin(cx) {
-                Poll::Ready(Ok(ChunkResult { done, value })) => {
-                    if done || value.is_undefined() {
-                        break;
-                    }
-    
-                    self.buff = Some(value.unchecked_into::<ByteArray>());
-                    self.current = self.next_chunk();
-                },
-    
-                Poll::Ready(Err(e)) => {
-                    self.err = Some(e);
-                    return Poll::Ready(Err(std::io::Error::new(ErrorKind::Other, "error reading js stream")))
-                },
-
-                Poll::Pending if offset == 0 => return Poll::Pending,
-                Poll::Pending => break
-            }
+    pub async fn try_clone (&mut self) -> Result<Self> {
+        // Wait for current chunk to finish
+        while let Some(ref mut current) = self.current {
+            let _ = JsFuture::from(current.promise.clone()).await?;
         }
 
-        return Poll::Ready(Ok(offset))
+        // Release read lock
+        if let Some(ref reader) = self.reader {
+            reader.release_lock();
+            self.reader = None;
+        }
+
+        // Tee stream
+        let array = self.stream.tee();
+        self.stream = array.get(0).unchecked_into();
+        let clone = array.get(1).unchecked_into::<ReadableStream>();
+        return Self::new(clone)
+    }
+
+    #[inline]
+    fn next_chunk (&mut self) -> NextChunk {
+        let promise = self.get_reader().read();
+        let future = JsFuture::from(promise.clone());
+        return NextChunk { promise, future, waker: Cell::new(None) }
+    }
+
+    #[inline]
+    fn get_reader (&mut self) -> &web_sys::ReadableStreamDefaultReader {
+        if let Some(ref reader) = self.reader {
+            return reader
+        }
+
+        let reader = self.stream.get_reader();
+        debug_assert!(reader.is_instance_of::<web_sys::ReadableStreamDefaultReader>());
+        self.reader = Some(reader.unchecked_into::<web_sys::ReadableStreamDefaultReader>());
+        return unsafe { self.reader.as_ref().unwrap_unchecked() }
     }
 }
 
-impl AsJsReadStream for JsReadStream {
+impl Stream for JsReadStream {
+    type Item = Result<Uint8Array>;
+
     #[inline]
-    fn as_stream (&self) -> &web_sys::ReadableStream {
-        return &self.stream
+    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
+        if self.done { return Poll::Ready(None) }
+        if self.current.is_none() { self.current = Some(self.next_chunk()) }
+
+        let chunk = unsafe { self.current.as_mut().unwrap_unchecked() };
+        if let Poll::Ready(ChunkResult { done, value }) = chunk.poll_unpin(cx)? {
+            self.done = done || value.is_none();
+            self.current = None;
+            return unsafe { Poll::Ready(Some(Ok(value.unwrap_unchecked()))) };
+        }
+
+        return Poll::Pending
+    }
+}
+
+impl IntoFetchBody for JsReadStream {
+    #[inline]
+    fn into_body (self) -> Option<JsValue> {
+        return Some(self.stream.clone().into())
     }
 }
 
 impl Drop for JsReadStream {
     #[inline]
     fn drop(&mut self) {
-        self.reader.release_lock()
+        if let Some(ref reader) = self.reader {
+            reader.release_lock()
+        }
     }
 }
 
+/*
 /// A rustfull wrapper arround a JavaScript byte [`ReadableStream`](web_sys::ReadableStream)
 pub struct JsReadByteStream {
     #[allow(unused)]
@@ -223,34 +160,6 @@ impl JsReadByteStream {
     #[inline]
     pub fn custom () -> super::builder::ReadByteBuilder {
         return super::builder::ReadByteBuilder::new()
-    }
-
-    #[docfg(web_sys_unstable_apis)]
-    pub fn from_bytes (bytes: Vec<u8>) -> Result<Self> {
-        let mut offset = Cell::new(0);
-
-        let pull = move |con: web_sys::ReadableByteStreamController| {
-            if let Some(req) = con.byob_request() {
-                if let Some(view) = req.view() {
-                    let view = view.unchecked_into::<Uint8Array>();
-
-                    let len = view.byte_length() as usize;
-                    let new_offset = offset.get() + len;
-
-                    view.copy_from(&bytes.as_slice()[offset.get()..new_offset]);
-                    offset.set(new_offset);
-                    return req.respond_with_u32(len as u32);
-                }
-    
-                return req.respond_with_u32(0);
-            }
-
-            todo!()
-        };
-
-        return Self::custom()
-            .pull(pull)
-            .build()
     }
 
     #[inline]
@@ -288,58 +197,8 @@ impl JsReadByteStream {
         return Ok(Self { stream: this, reader: inner, #[cfg(web_sys_unstable_apis)] _builder: None, err: None })
     }
 
-    // TODO FIX
-    #[inline]
-    pub async fn read_chunk (&mut self, buf: &mut [u8]) -> Result<()> {
-        if buf.len() == 0 { return Ok(()) }
-        JsFuture::from(self.reader.read_with_u8_array(buf)).await?;
-        return Ok(())
-    }
+    async fn next_chunk (&mut self, v: &mut [u8]) {
 
-    #[inline]
-    pub async fn read_chunk_into_buffer (&mut self, buf: &js_sys::Object) -> Result<()> {
-        JsFuture::from(self.reader.read_with_array_buffer_view(&buf)).await?;
-        return Ok(())
-    }
-}
-
-impl AsyncRead for JsReadByteStream {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        mut buf: &mut [u8],
-    ) -> Poll<std::io::Result<usize>> {
-        let mut offset = 0;
-
-        while buf.len() > 0 {
-            let fut = unsafe {
-                self.reader.read_with_u8_array(core::slice::from_mut(buf.get_unchecked_mut(0)))
-            };
-
-            match JsFuture::from(fut).poll_unpin(cx) {
-                Poll::Ready(Ok(_)) => {
-                    offset += 1;
-                    buf = &mut buf[1..];
-                },
-
-                Poll::Ready(Err(e)) => {
-                    self.err = Some(e);
-                    return Poll::Ready(Err(std::io::Error::new(ErrorKind::Other, "error reading js stream")))
-                },
-
-                Poll::Pending if offset == 0 => return Poll::Pending,
-                Poll::Pending => break
-            }
-        }
-
-        return Poll::Ready(Ok(offset))
-    }
-}
-
-impl AsJsReadStream for JsReadByteStream {
-    #[inline]
-    fn as_stream (&self) -> &web_sys::ReadableStream {
-        return &self.stream
     }
 }
 
@@ -349,10 +208,13 @@ impl Drop for JsReadByteStream {
         self.reader.release_lock();
     }
 }
+*/
 
 /// Future for [`next_chunk`](JsReadStream::next_chunk)
 struct NextChunk {
-    future: JsFuture
+    promise: js_sys::Promise,
+    future: JsFuture,
+    waker: Cell<Option<Waker>>
 }
 
 impl Future for NextChunk {
@@ -361,18 +223,37 @@ impl Future for NextChunk {
     #[inline]
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         if let Poll::Ready(result) = self.future.try_poll_unpin(cx)? {
-            let done = unsafe {
-                js_sys::Reflect::get(&result, &JsValue::from_str("done"))?
-                    .as_bool()
-                    .unwrap_unchecked()
-            };
-    
-            let value = js_sys::Reflect::get(&result, &JsValue::from_str("value"))?;
-            debug_assert!(value.is_instance_of::<Uint8Array>());
-            return Poll::Ready(Ok(ChunkResult { done, value: value.unchecked_into::<Uint8Array>() }));
+            if let Some(waker) = self.waker.take() { waker.wake() }
+            return Poll::Ready(ChunkResult::try_from(&result))
         }
 
         return Poll::Pending
+    }
+}
+
+impl TryFrom<&JsValue> for ChunkResult {
+    type Error = JsValue;
+
+    fn try_from(result: &JsValue) -> Result<Self> {
+        let done = unsafe {
+            js_sys::Reflect::get(result, &JsValue::from_str("done"))?
+                .as_bool()
+                .unwrap_unchecked()
+        };
+
+        let value = js_sys::Reflect::get(result, &JsValue::from_str("value"))?;
+        if value.is_null() || value.is_undefined() { return Ok(Self { done, value: None }) }
+        debug_assert!(value.is_instance_of::<Uint8Array>());
+        return Ok(Self { done, value: Some(value.unchecked_into()) })
+    }
+}
+
+impl TryFrom<JsValue> for ChunkResult {
+    type Error = JsValue;
+
+    #[inline]
+    fn try_from(result: JsValue) -> Result<Self> {
+        return Self::try_from(&result)
     }
 }
 
@@ -380,5 +261,5 @@ impl Future for NextChunk {
 #[non_exhaustive]
 pub struct ChunkResult {
     pub done: bool,
-    pub value: Uint8Array
+    pub value: Option<Uint8Array>
 }

@@ -1,11 +1,12 @@
 use std::{rc::Rc, sync::Arc, fmt::Debug};
+use futures::{StreamExt, TryStreamExt};
 use js_sys::Uint8Array;
 use serde::{de::DeserializeOwned};
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen, JsCast};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{RequestInit, RequestCache, RequestCredentials, Headers, RequestMode, RequestRedirect, ReferrerPolicy};
 use crate::{Result, window};
-use super::{JsReadStream, AsJsReadStream};
+use super::{JsReadStream};
 
 macro_rules! impl_ident {
     ($($t:ty),+) => {
@@ -54,13 +55,6 @@ impl<T: IntoFetchBody> IntoFetchBody for Option<T> {
     #[inline]
     fn into_body (self) -> Option<JsValue> {
         self.and_then(IntoFetchBody::into_body)
-    }
-}
-
-impl<T: AsJsReadStream> IntoFetchBody for T {
-    #[inline]
-    fn into_body (self) -> Option<JsValue> {
-        self.as_stream().into_body()
     }
 }
 

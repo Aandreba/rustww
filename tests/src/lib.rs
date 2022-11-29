@@ -1,9 +1,10 @@
 use std::time::Duration;
 use futures::{TryStreamExt, StreamExt, join, AsyncReadExt};
-use rustww::{notify::{Notification}, geo::Geolocation, orient::{Orientation, Motion}, math::*, battery::Battery, io::{JsReadStream, Request, JsReadByteStream}};
-use wasm_bindgen::{prelude::wasm_bindgen, JsValue, JsCast};
-use wasm_bindgen_futures::JsFuture;
+use js_sys::Uint8Array;
+use rustww::{notify::{Notification}, geo::Geolocation, orient::{Orientation, Motion}, math::*, battery::Battery, io::{JsReadStream, Request}, fs::File, task::spawn_catch_local};
+use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsValue, JsCast};
 use web_sys::{window, Response, Blob};
+use wasm_bindgen::UnwrapThrowExt;
 
 #[wasm_bindgen]
 extern "C" {
@@ -17,13 +18,14 @@ pub fn main () {
 }
 
 #[wasm_bindgen]
-pub fn runner () {
-    test_read_custom();
+pub fn runner () -> Result<(), JsValue> {
+    test_fs()?;
+    Ok(())
 }
 
 #[cfg(target_feature = "atomics")]
 fn test_thread () {
-    spawn(move || {
+    rustww::thread::spawn(move || {
         log("Hello world!");
     });
 }
@@ -115,28 +117,50 @@ fn test_math () {
     log(&format!("{} = 30", vec4 * vec4));
 }
 
-#[cfg(web_sys_unstable_apis)]
-fn test_read_custom () {
-    use futures::io::{BufReader, Cursor};
-    use js_sys::Uint8Array;
-    use rustww::time::{sleep, spawn_interval};
-
-    let bytes = vec![1u8, 2, 3, 4, 5]; 
-    let mut reader = JsReadByteStream::from_bytes(bytes).unwrap();
-
-    wasm_bindgen_futures::spawn_local(async move {
-        let mut byte = vec![0; 3];
-        reader.read_chunk(&mut byte).await.unwrap();
-        unsafe { ::web_sys::console::log_1(&Uint8Array::from(byte.as_slice())) };
-    });
-}
-
 fn test_fetch_and_read () {
     wasm_bindgen_futures::spawn_local(async move {
         let fetch = Request::get("index.html").await.unwrap();
+        let text = fetch.bytes();
+
         //let text = fetch.body().unwrap().unwrap().read_remaining().await.unwrap();
         //let text = String::from_utf8(text).unwrap();
-        let text = fetch.text().await.unwrap();
-        text.split('\n').for_each(log);
     });
+}
+
+fn test_fs () -> Result<(), JsValue> {
+    let elem = window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .create_element_with_str("button", "hello")
+        .unwrap();
+
+    let f = Closure::<dyn FnMut()>::new(move || {
+        spawn_catch_local(async move {
+            let mut file = File::from_picker()
+                .await?
+                .next()
+                .unwrap();
+
+            let meta = file.read_stream()
+                .await?
+                .read_remaining()
+                .await?;
+
+            unsafe { ::web_sys::console::log_1(&Uint8Array::view(&meta)) };
+            Ok(())
+        })
+    });
+
+    elem.add_event_listener_with_callback("click", f.into_js_value().unchecked_ref())?;
+
+    window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .body()
+        .unwrap()
+        .append_with_node_1(&elem)?;
+
+    return Ok(())
 }

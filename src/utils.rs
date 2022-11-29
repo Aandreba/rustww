@@ -281,5 +281,4 @@ impl Display for BlockError {
     }
 }
 
-impl std::error::Error for BlockError {
-}
+impl std::error::Error for BlockError {}
