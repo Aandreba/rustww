@@ -4,7 +4,6 @@ use js_sys::Uint8Array;
 use rustww::{notify::{Notification}, geo::Geolocation, orient::{Orientation, Motion}, math::*, battery::Battery, io::{JsReadStream, Request}, fs::File, task::spawn_catch_local};
 use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsValue, JsCast};
 use web_sys::{window, Response, Blob};
-use wasm_bindgen::UnwrapThrowExt;
 
 #[wasm_bindgen]
 extern "C" {

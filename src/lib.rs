@@ -37,6 +37,7 @@ pub extern crate wasm_thread;
 pub use wasm_thread as thread;
 use web_sys::Window;
 
+/// Task-related functionality
 pub mod task;
 
 /// Time-related functionality

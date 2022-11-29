@@ -90,13 +90,20 @@ impl JsReadStream {
     }
 
     #[inline]
+    pub fn into_byte_stream (self) -> JsReadStreamBytes {
+        return JsReadStreamBytes {
+            inner: self,
+            buffer: None
+        }
+    }
+
+    #[inline]
     fn next_chunk (&mut self) -> NextChunk {
         let promise = self.get_reader().read();
         let future = JsFuture::from(promise.clone());
         return NextChunk { promise, future, waker: Cell::new(None) }
     }
 
-    #[inline]
     fn get_reader (&mut self) -> &web_sys::ReadableStreamDefaultReader {
         if let Some(ref reader) = self.reader {
             return reader
@@ -112,7 +119,6 @@ impl JsReadStream {
 impl Stream for JsReadStream {
     type Item = Result<Uint8Array>;
 
-    #[inline]
     fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
         if self.done { return Poll::Ready(None) }
         if self.current.is_none() { self.current = Some(self.next_chunk()) }
@@ -141,6 +147,56 @@ impl Drop for JsReadStream {
         if let Some(ref reader) = self.reader {
             reader.release_lock()
         }
+    }
+}
+
+pub struct JsReadStreamBytes {
+    inner: JsReadStream,
+    buffer: Option<ByteArray>
+}
+
+impl JsReadStreamBytes {
+    #[inline]
+    pub fn unzip (self) -> (JsReadStream, Option<Uint8Array>) {
+        return (self.inner, self.buffer.map(JsCast::unchecked_into))
+    }
+
+    #[inline]
+    pub async fn try_clone (&mut self) -> Result<Self> {
+        return Ok(Self {
+            inner: self.inner.try_clone().await?,
+            buffer: self.buffer.clone()
+        })
+    }
+}
+
+impl Stream for JsReadStreamBytes {
+    type Item = Result<u8>;
+
+    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Some(ref buffer) = self.buffer {
+            let value = buffer.get_index(0);
+            self.buffer = match buffer.length() {
+                1 => None,
+                _ => Some(buffer.subarray(1))
+            };
+            return Poll::Ready(Some(Ok(value)))
+        }
+
+        if let Poll::Ready(result) = self.inner.try_poll_next_unpin(cx)? {
+            self.buffer = result.map(JsCast::unchecked_into);
+            
+            if let Some(ref buffer) = self.buffer {
+                let value = buffer.get_index(0);
+                self.buffer = match buffer.length() {
+                    1 => None,
+                    _ => Some(buffer.subarray(1))
+                };
+                return Poll::Ready(Some(Ok(value)))
+            }
+        }
+        
+        return Poll::Pending
     }
 }
 

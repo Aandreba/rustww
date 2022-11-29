@@ -6,6 +6,10 @@ use crate::{Result, window, utils::{LocalReceiver, local_channel, ShotReceiver, 
 
 const MAX_MILLIS: u128 = i32::MAX as u128;
 
+/// An owned handler of an interval
+/// 
+/// Interval handlers contain the data related to their closure, and will clear the interval when dropped.
+/// They also receive the return value of each call to their closure.
 pub struct Interval<T> {
     id: i32,
     recv: LocalReceiver<T>,
@@ -14,6 +18,9 @@ pub struct Interval<T> {
 }
 
 impl<T: 'static> Interval<T> {
+    /// Creates a new handled interval with the specified callback and timeout.
+    /// 
+    /// If you want to create a permanently living interval, use [`spawn_interval`] or [`Interval::leak`]
     pub fn new<F: 'static + FnMut() -> T> (timeout: Duration, mut f: F) -> Result<Self> {
         let millis = timeout.as_millis();
         if unlikely(millis > MAX_MILLIS) {
@@ -35,25 +42,16 @@ impl<T: 'static> Interval<T> {
 }
 
 impl<T> Interval<T> {
+    /// Returns the id of the interval
     #[inline]
     pub fn id (&self) -> i32 {
         return self.id
     }
 
+    /// Leaks the interval, releasing memory management of the closure to the JavaScrpt GC.
     #[inline]
     pub fn leak (this: Self) {
         core::mem::forget(this)
-    }
-
-    #[inline]
-    pub fn try_clear (self) -> ::core::result::Result<(), Self> {
-        let this = ManuallyDrop::new(self);
-        if let Some(window) = web_sys::window() {
-            window.clear_interval_with_handle(this.id);
-            return Ok(())
-        }
-
-        return Err(ManuallyDrop::into_inner(this))
     }
 }
 
@@ -83,6 +81,7 @@ impl<T> Drop for Interval<T> {
     }
 }
 
+/// Spawns an interval directly into JavaScript memory management
 #[inline]
 pub fn spawn_interval<F: 'static + FnMut()> (timeout: Duration, f: F) -> Result<()> {
     let _ = Interval::leak(Interval::new(timeout, f)?);

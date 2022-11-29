@@ -215,6 +215,7 @@ pub struct ShotReceiver<T> {
 impl<T> Future for ShotReceiver<T> {
     type Output = T;
 
+    #[inline]
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
         if let Some(geo) = self.inner.value.take() {
             return Poll::Ready(geo);
