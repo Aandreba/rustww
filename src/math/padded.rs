@@ -9,6 +9,7 @@ macro_rules! impl_padded {
         ),+
     ) => {
         $(
+            #[doc = concat!("Euclidian vector of ", stringify!($len), " `", stringify!($ty), "` values")]
             #[derive(Clone, Copy, PartialEq, Default)]
             #[repr(transparent)]
             $v struct $name {

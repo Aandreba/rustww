@@ -187,6 +187,8 @@ impl<T> LocalSender<T> {
             if let Some(waker) = inner.waker.take() { waker.wake() }
             return Ok(())
         }
+
+        // There are no more recievers
         return Err(v)
     }
 }
@@ -271,15 +273,3 @@ impl<T> Default for FutureInner<T> {
         }
     }
 }
-
-#[derive(Debug)]
-struct BlockError;
-
-impl Display for BlockError {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Display::fmt(&ErrorKind::WouldBlock, f)
-    }
-}
-
-impl std::error::Error for BlockError {}

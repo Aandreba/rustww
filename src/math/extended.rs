@@ -8,6 +8,7 @@ macro_rules! impl_extended {
         ),+
     ) => {
         $(
+            #[doc = concat!("Euclidian vector of ", stringify!($len), " `", stringify!($ty), "` values")]
             #[derive(Clone, Copy, PartialEq, Default)]
             $v struct $name {
                 field1: $parent1,

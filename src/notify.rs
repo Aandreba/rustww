@@ -8,6 +8,7 @@ pub(crate) enum Delay {
     Date (chrono::DateTime<chrono::Utc>)
 }
 
+/// Notification builder.
 pub struct Notification {
     pub(crate) title: String,
     pub(crate) body: Option<String>,
@@ -16,6 +17,7 @@ pub struct Notification {
 }
 
 impl Notification {
+    /// Creates a new notification builder
     #[inline]
     pub fn new (title: impl IntoString) -> Self {
         Self {
@@ -26,35 +28,48 @@ impl Notification {
         }
     }
 
+    /// Appends a new body to the notification. By default, notifiactions don't have a body.
     #[inline]
     pub fn body (mut self, body: impl IntoString) -> Self {
         self.body = Some(body.into_string());
         self   
     }
 
+    /// Makes the notification fire with the specified delay after [`spawn`] is called.
+    /// By default, notifiactions don't have a delay.
     #[inline]
     pub fn fire_after (mut self, delay: Duration) -> Self {
         self.open = Some(Delay::Duration(delay));
         self
     }
 
+    /// Sets a new date for the notification to fire at.
+    /// By default, notifiactions don't have a delay.
     pub fn fire_date<Tz: chrono::TimeZone> (mut self, date: chrono::DateTime<Tz>) -> Self {
         self.open = Some(Delay::Date(date.with_timezone(&chrono::Utc)));
         self
     }
 
+    /// Makes the notification close with the specified delay after it's fired.
+    /// By default, notifiactions don't close automatically.
     #[inline]
     pub fn close_after (mut self, delay: Duration) -> Self {
         self.close = Some(Delay::Duration(delay));
         self
     }
 
+    /// Makes the notification close with the specified delay after it's fired.
+    /// By default, notifiactions don't close automatically.
     pub fn close_date<Tz: chrono::TimeZone> (mut self, date: chrono::DateTime<Tz>) -> Self {
         self.close = Some(Delay::Date(date.with_timezone(&chrono::Utc)));
         self
     }
 
-    pub fn spawn_local (self) {
+    /// Spawns a [`Future`] that will wait for the specified fire delay, show the notification, and wait the specified close delay before closing it.
+    /// 
+    /// # Panics
+    /// The spawned future will panic if the user doesn't grant permission to show notifications.
+    pub fn spawn (self) {
         async fn wait_delay (delay: Option<Delay>) {
             if let Some(delay) = delay {
                 let delay = match delay {
@@ -86,6 +101,8 @@ impl Notification {
     }
 }
 
+/// Returns the notification permissions granted by the user. If the user hasn't specified them yet,
+/// [`request_permission`](web_sys::Notification::request_permission) will be called
 pub async fn get_permision () -> Result<bool> {
     loop {
         match web_sys::Notification::permission() {

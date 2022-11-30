@@ -8,6 +8,7 @@ use core::arch::wasm64::*;
 use core::arch::wasm::*;
 use std::fmt::Debug;
 
+/// Euclidian vector of 4 `f32` values
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct Vec4f {
@@ -159,6 +160,7 @@ impl Debug for Vec4f {
     }
 }
 
+/// Euclidian vector of 2 `f64` values
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct Vec2d {

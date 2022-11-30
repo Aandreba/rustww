@@ -1,5 +1,5 @@
 use std::{time::Duration, intrinsics::unlikely, fmt::Debug, mem::ManuallyDrop};
-use futures::{Stream, StreamExt};
+use futures::{Stream, StreamExt, Future, FutureExt};
 use js_sys::{Promise, Function};
 use wasm_bindgen::{JsValue, prelude::Closure, JsCast};
 use crate::{Result, window, utils::{LocalReceiver, local_channel, ShotReceiver, one_shot}};
@@ -8,8 +8,12 @@ const MAX_MILLIS: u128 = i32::MAX as u128;
 
 /// An owned handler of an interval
 /// 
-/// Interval handlers contain the data related to their closure, and will clear the interval when dropped.
-/// They also receive the return value of each call to their closure.
+/// An interval is a closure thet is executed repeatedly after a specified delay, without blocking.
+/// 
+/// Interval handlers contain the data related to their closure, and when dropped will clear the interval 
+/// and release any memory relating to their closure.
+/// 
+/// They also receive the return value of each call to the closure, so they can be used as a Rust [`Stream`]
 pub struct Interval<T> {
     id: i32,
     recv: LocalReceiver<T>,
@@ -28,8 +32,15 @@ impl<T: 'static> Interval<T> {
         }
     
         let (send, recv) = local_channel();
+        let mut send = Some(send);
+
         let f = move || {
-            let _ = send.try_send(f());
+            if let Some(ref current_send) = send {
+                if current_send.try_send(f()).is_err() {
+                    // This helps free memory, because we're droping the weak reference
+                    send = None;
+                }
+            }
         };
 
         let closure = Closure::new(f);
@@ -50,8 +61,9 @@ impl<T> Interval<T> {
 
     /// Leaks the interval, releasing memory management of the closure to the JavaScrpt GC.
     #[inline]
-    pub fn leak (this: Self) {
-        core::mem::forget(this)
+    pub fn leak (this: Self) -> LocalReceiver<T> {
+        let this = ManuallyDrop::new(this);
+        return unsafe { core::ptr::read(&this.recv) }
     }
 }
 
@@ -81,32 +93,75 @@ impl<T> Drop for Interval<T> {
     }
 }
 
-/// Spawns an interval directly into JavaScript memory management
+/// Spawns an interval directly into JavaScript memory management, leaking any Rust memory related to it,
+/// and returning a [`Stream`] that returns the result of each interval.
 #[inline]
-pub fn spawn_interval<F: 'static + FnMut()> (timeout: Duration, f: F) -> Result<()> {
-    let _ = Interval::leak(Interval::new(timeout, f)?);
-    return Ok(())
-}
-
-#[inline]
-pub fn spawn_timeout<T: 'static, F: 'static + FnOnce() -> T> (timeout: Duration, f: F) -> Result<ShotReceiver<T>> {
-    let millis = timeout.as_millis();
-    if unlikely(millis > MAX_MILLIS) {
-        return Err(JsValue::from_str("timeout overflow"))
-    }
-
-    let (send, recv) = one_shot();
-    let f = move || {
-        let _ = send.try_send(f());
-    };
-
-    let closure = Closure::once_into_js(f);
-    debug_assert!(closure.is_instance_of::<Function>());
-
-    let _ = window()?.set_timeout_with_callback_and_timeout_and_arguments_0(closure.unchecked_ref(), millis as i32)?;
+pub fn spawn_interval<T: 'static, F: 'static + FnMut() -> T> (timeout: Duration, f: F) -> Result<LocalReceiver<T>> {
+    let recv = Interval::leak(Interval::new(timeout, f)?);
     return Ok(recv)
 }
 
+/// An owned handler of a timeout.
+/// 
+/// A timeout is a closure that is executed only once, after a specified delay, without blocking.
+/// 
+/// Timeout handlers contain the data related to their closure, and when dropped will clear the timeout 
+/// and release any memory relating to their closure.
+/// 
+/// They also receive the return value of the closure, so they can be used as a Rust [`Future`]
+pub struct Timeout<T> {
+    id: i32,
+    recv: ShotReceiver<T>,
+    _closure: Closure<dyn FnMut()>
+}
+
+impl<T: 'static> Timeout<T> {
+    /// Creates a new timout, returning it's handle
+    pub fn new<F: 'static + FnOnce() -> T> (timeout: Duration, f: F) -> Result<Self> {
+        let millis = timeout.as_millis();
+        if unlikely(millis > MAX_MILLIS) {
+            return Err(JsValue::from_str("timeout overflow"))
+        }
+
+        let (send, recv) = one_shot();
+        let f = move || {
+            let _ = send.try_send(f());
+        };
+
+        let closure = Closure::once(f);
+        let function = closure.as_ref();
+        debug_assert!(function.is_instance_of::<Function>());
+
+        let id = window()?.set_timeout_with_callback_and_timeout_and_arguments_0(function.unchecked_ref(), millis as i32)?;
+        return Ok(Self { id, recv, _closure: closure })
+    }
+
+    /// Returns a future that resolves when the timeout executes.
+    /// Unlike [`Timeout`], this future will not clear the interval when droped.
+    #[inline]
+    pub fn forget (self) -> ShotReceiver<T> {
+        let this = ManuallyDrop::new(self);
+        return unsafe { core::ptr::read(&this.recv) }
+    }
+}
+
+impl<T> Future for Timeout<T> {
+    type Output = T;
+
+    #[inline]
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        self.recv.poll_unpin(cx)
+    }
+}
+
+impl<T> Drop for Timeout<T> {
+    #[inline]
+    fn drop(&mut self) {
+        window().unwrap().clear_timeout_with_handle(self.id);
+    }
+}
+
+/// Returns a [`Future`] that resolves after a specified delay.
 #[inline]
 pub async fn sleep (dur: Duration) -> Result<()> {
     return wasm_bindgen_futures::JsFuture::from(sleep_promise(dur)).await.map(|_| ())

@@ -7,6 +7,7 @@ macro_rules! impl_scalar_vec {
         ),+
     ) => {
         $(
+            #[doc = concat!("Euclidian vector of ", stringify!($len), " `", stringify!($ty), "` values")]
             #[derive(Debug, Clone, Copy, PartialEq, Default)]
             $v struct $name {
                 $(
