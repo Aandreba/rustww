@@ -6,8 +6,8 @@ use futures::StreamExt;
 
 #[wasm_bindgen]
 extern {
-    pub type GeolocationPosition;
-    pub type GeolocationCoordinates;
+    type GeolocationPosition;
+    type GeolocationCoordinates;
 
     #[wasm_bindgen(method, getter)]
     pub fn coords(this: &GeolocationPosition) -> GeolocationCoordinates;

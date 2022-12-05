@@ -1,10 +1,11 @@
-use std::{rc::Rc, task::{Waker, Poll}, collections::VecDeque};
-use futures::{Stream};
-use wasm_bindgen::{prelude::Closure, __rt::WasmRefCell};
+use std::{task::{Poll}};
+use futures::{Stream, StreamExt};
+use wasm_bindgen::{prelude::Closure};
 use web_sys::{DeviceOrientationEvent, DeviceMotionEvent, DeviceAcceleration, DeviceRotationRate};
-use crate::{Result, utils::{one_shot}, math::Vec3d};
+use crate::{Result, utils::{one_shot, LocalReceiver, local_channel}, math::Vec3d, window};
 use wasm_bindgen::JsCast;
 
+/// Three angles that represent rotation in three dimensions
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct EulerAngles {
     /// Represents the motion of the device around the z axis, represented in degrees with values ranging from 0 (inclusive) to 360 (exclusive).
@@ -16,12 +17,14 @@ pub struct EulerAngles {
 }
 
 impl EulerAngles {
+    /// Converts [`EulerAngles`] into [`Vec3d`]
     #[inline]
     pub fn to_vec (self) -> Vec3d {
         return Vec3d::new(self.beta, self.gamma, self.alpha)
     }
 }
 
+/// Information about the rotation of the device
 #[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct Orientation {
@@ -31,6 +34,7 @@ pub struct Orientation {
 }
 
 impl Orientation {
+    /// Returns the device's current orientation information
     pub async fn current () -> Result<Self> {
         let (send, result) = one_shot();
         let f = Closure::<dyn FnMut(DeviceOrientationEvent)>::new(move |evt: DeviceOrientationEvent| {
@@ -53,29 +57,29 @@ impl Orientation {
         return Ok(result);
     }
 
+    /// Returns a watcher over the device's rotation
     #[inline]
     pub fn watch () -> Result<OrientationWatcher> {
         return OrientationWatcher::new()
     }
 }
 
+/// A watcher for a device's [`Orientation`].
+/// 
+/// Every time the orientation of the device changes, [`OrientationWatcher`] will be notified.
+/// 
+/// When droped, the watcher will be closed, releasing all the memory of it's closure, avoiding a memory leak.
 pub struct OrientationWatcher {
-    #[allow(unused)]
-    resolve: Closure<dyn FnMut(DeviceOrientationEvent)>,
-    buffer: Rc<WasmRefCell<(VecDeque<Orientation>, Option<Waker>)>>,
+    _resolve: Closure<dyn FnMut(DeviceOrientationEvent)>,
+    recv: LocalReceiver<Orientation>
 }
 
 impl OrientationWatcher {
     #[inline]
     pub fn new () -> Result<Self> {
-        let buffer = Rc::new(WasmRefCell::new((VecDeque::new(), None::<Waker>)));
-
-        let my_buffer = buffer.clone();
+        let (send, recv) = local_channel();
         let resolve = Closure::<dyn FnMut(DeviceOrientationEvent)>::new(move |evt: DeviceOrientationEvent| {
-            let geo = Orientation::from(evt);
-            let mut my_buffer = my_buffer.borrow_mut();
-            my_buffer.0.push_back(geo);
-            if let Some(waker) = my_buffer.1.take() { waker.wake() }
+            let _ = send.try_send(Orientation::from(evt));
         });
 
         let listener: &js_sys::Function;
@@ -91,8 +95,8 @@ impl OrientationWatcher {
         win.add_event_listener_with_callback_and_bool("deviceorientation", listener, true)?;
 
         return Ok(Self {
-            resolve,
-            buffer,
+            _resolve: resolve,
+            recv,
         })
     }
 }
@@ -100,14 +104,9 @@ impl OrientationWatcher {
 impl Stream for OrientationWatcher {
     type Item = Orientation;
 
-    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut buffer = self.buffer.borrow_mut();
-        if let Some(geo) = buffer.0.pop_front() {
-            return Poll::Ready(Some(geo))
-        }
-
-        buffer.1 = Some(cx.waker().clone());
-        return Poll::Pending
+    #[inline]
+    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
+        self.recv.poll_next_unpin(cx)
     }
 }
 
@@ -116,17 +115,18 @@ impl Drop for OrientationWatcher {
         let listener: &js_sys::Function;
         cfg_if::cfg_if! {
             if #[cfg(debug_assertions)] {
-                listener = self.resolve.as_ref().dyn_ref().unwrap();
+                listener = self._resolve.as_ref().dyn_ref().unwrap();
             } else {
                 listener = self.resolve.as_ref().unchecked_ref();
             }
         }
 
-        let win = web_sys::window().unwrap();
+        let win = window().unwrap();
         win.remove_event_listener_with_callback_and_bool("deviceorientation", listener, true).unwrap();
     }
 }
 
+/// Information about the device's motion
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Motion {
@@ -145,10 +145,11 @@ pub struct Motion {
 }
 
 impl Motion {
+    /// Returns the device's current motion information
     pub async fn current () -> Result<Self> {
         let (send, result) = one_shot();
         let f = Closure::<dyn FnMut(DeviceMotionEvent)>::new(move |evt: DeviceMotionEvent| {
-            send.try_send(Motion::from(evt)).unwrap();
+            let _ = send.try_send(Motion::from(evt));
         });
 
         let listener: &js_sys::Function;
@@ -168,29 +169,31 @@ impl Motion {
         return Ok(result);
     }
 
+    /// Returns a watcher over the device's motion
     #[inline]
     pub fn watch () -> Result<MotionWatcher> {
         return MotionWatcher::new()
     }
 }
 
+/// A watcher for a device's [`Motion`].
+/// 
+/// Every time the motion information of the device changes, [`MotionWatcher`] will be notified.
+/// 
+/// When droped, the watcher will be closed, releasing all the memory of it's closure, avoiding a memory leak.
 pub struct MotionWatcher {
     #[allow(unused)]
     resolve: Closure<dyn FnMut(DeviceMotionEvent)>,
-    buffer: Rc<WasmRefCell<(VecDeque<Motion>, Option<Waker>)>>,
+    recv: LocalReceiver<Motion>
 }
 
 impl MotionWatcher {
+    /// Creates a new [`MotionWatcher`]
     #[inline]
     pub fn new () -> Result<Self> {
-        let buffer = Rc::new(WasmRefCell::new((VecDeque::new(), None::<Waker>)));
-
-        let my_buffer = buffer.clone();
+        let (send, recv) = local_channel();
         let resolve = Closure::<dyn FnMut(DeviceMotionEvent)>::new(move |evt: DeviceMotionEvent| {
-            let geo = Motion::from(evt);
-            let mut my_buffer = my_buffer.borrow_mut();
-            my_buffer.0.push_back(geo);
-            if let Some(waker) = my_buffer.1.take() { waker.wake() }
+            let _ = send.try_send(Motion::from(evt));
         });
 
         let listener: &js_sys::Function;
@@ -207,7 +210,7 @@ impl MotionWatcher {
 
         return Ok(Self {
             resolve,
-            buffer,
+            recv,
         })
     }
 }
@@ -215,14 +218,9 @@ impl MotionWatcher {
 impl Stream for MotionWatcher {
     type Item = Motion;
 
-    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut buffer = self.buffer.borrow_mut();
-        if let Some(geo) = buffer.0.pop_front() {
-            return Poll::Ready(Some(geo))
-        }
-
-        buffer.1 = Some(cx.waker().clone());
-        return Poll::Pending
+    #[inline]
+    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
+        self.recv.poll_next_unpin(cx)
     }
 }
 
