@@ -30,26 +30,28 @@ extern {
     pub fn speed(this: &GeolocationCoordinates) -> Option<f64>;
 }
 
+/// Information abut a specific geolocation
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Geolocation {
-    /// Returns a double representing the position's latitude in decimal degrees.
+    /// Represents the position's latitude in decimal degrees.
     pub latitude: f64,
-    /// Returns a double representing the position's longitude in decimal degrees.
+    /// Represents the position's longitude in decimal degrees.
     pub longitude: f64,
-    /// Returns a double representing the position's altitude in meters, relative to sea level. This value can be null if the implementation cannot provide the data.
+    /// Represents the position's altitude in meters, relative to sea level. This value can be null if the implementation cannot provide the data.
     pub altitude: Option<f64>,
-    /// Returns a double representing the accuracy of the latitude and longitude properties, expressed in meters.
+    /// Represents the accuracy of the latitude and longitude properties, expressed in meters.
     pub accuracy: f64,
-    /// Returns a double representing the accuracy of the altitude expressed in meters. This value can be null.
+    /// Represents the accuracy of the altitude expressed in meters. This value can be null.
     pub altitude_accuracy: Option<f64>,
-    /// Returns a double representing the direction towards which the device is facing. This value, specified in degrees, indicates how far off from heading true north the device is. 0 degrees represents true north, and the direction is determined clockwise (which means that east is 90 degrees and west is 270 degrees). If speed is 0, heading is NaN. If the device is unable to provide heading information, this value is null.
+    /// Represents the direction towards which the device is facing. This value, specified in degrees, indicates how far off from heading true north the device is. 0 degrees represents true north, and the direction is determined clockwise (which means that east is 90 degrees and west is 270 degrees). If speed is 0, heading is NaN. If the device is unable to provide heading information, this value is null.
     pub heading: Option<f64>,
-    /// Returns a double representing the velocity of the device in meters per second. This value can be null.
+    /// Represents the velocity of the device in meters per second. This value can be null.
     pub speed: Option<f64>
 }
 
 impl Geolocation {
+    /// Returns a [`Future`] that resolves to the current geolocation of the device
     pub fn current () -> Result<CurrentGeolocation> {
         let (send, inner) = one_shot();
 
@@ -87,26 +89,26 @@ impl Geolocation {
         return Ok(CurrentGeolocation { inner })
     }
 
+    /// Returns a watcher for the device's geolocation
     #[inline]
     pub fn watch () -> Result<GeolocationWatcher> {
         return GeolocationWatcher::new()
     }
-
-    #[docfg::docfg(target_feature = "atomics")]
-    #[inline]
-    pub fn watch_send () -> Result<SendGeolocationWatcher> {
-        return SendGeolocationWatcher::new()
-    }
 }
 
+/// A watcher for a device's [`Geolocation`].
+/// 
+/// Every time the geolocation of the device changes, [`GeolocationWatcher`] will be notified.
+/// 
+/// When droped, the watcher will be closed, releasing all the memory of it's closure, avoiding a memory leak.
 pub struct GeolocationWatcher {
     id: i32,
-    #[allow(unused)]
-    success: Closure<dyn FnMut(GeolocationPosition)>,
+    _success: Closure<dyn FnMut(GeolocationPosition)>,
     recv: LocalReceiver<Geolocation>
 }
 
 impl GeolocationWatcher {
+    /// Creates a new [`GeolocationWatcher`]
     #[inline]
     pub fn new () -> Result<Self> {
         let (send, recv) = local_channel();
@@ -127,7 +129,7 @@ impl GeolocationWatcher {
         let id = geo.watch_position(resolve)?;
         return Ok(Self {
             id,
-            success,
+            _success: success,
             recv,
         })
     }
@@ -145,61 +147,8 @@ impl Stream for GeolocationWatcher {
 impl Drop for GeolocationWatcher {
     #[inline]
     fn drop(&mut self) {
-        let geo = web_sys::window().unwrap().navigator().geolocation().unwrap();
+        let geo = window().unwrap().navigator().geolocation().unwrap();
         geo.clear_watch(self.id);
-    }
-}
-
-cfg_if::cfg_if! {
-    if #[cfg(any(test, target_feature = "atomics"))] {
-        use crate::send::{syncable_wrapped_closure, SyncableClosure};
-
-        #[cfg_attr(docsrs, doc(cfg(target_feature = "atomics")))]
-        pub struct SendGeolocationWatcher {
-            id: i32,
-            #[allow(unused)]
-            success: SyncableClosure<dyn Fn(GeolocationPosition) + Send + Sync>,
-            recv: async_channel::Receiver<Geolocation>
-        }
-
-        impl SendGeolocationWatcher {
-            #[inline]
-            pub fn new () -> Result<Self> {
-                let (send, recv) = async_channel::unbounded();
-                let closure = Box::new(move |loc: GeolocationPosition| {
-                    let send = send.clone();
-                    let fut = async move { let _ = send.send(Geolocation::from(loc)).await; };
-                    wasm_bindgen_futures::spawn_local(fut);
-                });
-
-                let resolve = unsafe { syncable_wrapped_closure::<dyn Fn(GeolocationPosition), _>(&closure) };
-                let geo = web_sys::window().unwrap().navigator().geolocation()?;
-                let id = geo.watch_position(&resolve)?;
-
-                return Ok(Self {
-                    id,
-                    success: SyncableClosure::new(resolve.sync(), closure),
-                    recv,
-                })
-            }
-        }
-        
-        impl Stream for SendGeolocationWatcher {
-            type Item = Geolocation;
-        
-            #[inline]
-            fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
-                self.recv.poll_next_unpin(cx)
-            }
-        }
-        
-        impl Drop for SendGeolocationWatcher {
-            #[inline]
-            fn drop(&mut self) {
-                let geo = web_sys::window().unwrap().navigator().geolocation().unwrap();
-                geo.clear_watch(self.id);
-            }
-        }
     }
 }
 
@@ -239,6 +188,7 @@ impl From<GeolocationPosition> for Geolocation {
     }
 }
 
+/// Future for [`current`](Geolocation::current)
 pub struct CurrentGeolocation {
     inner: ShotReceiver<Result<GeolocationPosition>>
 }

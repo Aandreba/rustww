@@ -35,7 +35,7 @@ impl Notification {
         self   
     }
 
-    /// Makes the notification fire with the specified delay after [`spawn`] is called.
+    /// Makes the notification fire with the specified delay after [`spawn`](Notification::spawn) is called.
     /// By default, notifiactions don't have a delay.
     #[inline]
     pub fn fire_after (mut self, delay: Duration) -> Self {
@@ -65,7 +65,7 @@ impl Notification {
         self
     }
 
-    /// Spawns a [`Future`] that will wait for the specified fire delay, show the notification, and wait the specified close delay before closing it.
+    /// Spawns a [`Future`](std::future::Future) that will wait for the specified fire delay, show the notification, and wait the specified close delay before closing it.
     /// 
     /// # Panics
     /// The spawned future will panic if the user doesn't grant permission to show notifications.

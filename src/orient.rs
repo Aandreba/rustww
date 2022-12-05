@@ -57,12 +57,6 @@ impl Orientation {
     pub fn watch () -> Result<OrientationWatcher> {
         return OrientationWatcher::new()
     }
-
-    #[docfg::docfg(target_feature = "atomics")]
-    #[inline]
-    pub fn watch_send () -> Result<SendOrientationWatcher> {
-        return SendOrientationWatcher::new()
-    }
 }
 
 pub struct OrientationWatcher {
@@ -133,68 +127,14 @@ impl Drop for OrientationWatcher {
     }
 }
 
-cfg_if::cfg_if! {
-    if #[cfg(any(test, target_feature = "atomics"))] {
-        use futures::StreamExt;
-        use crate::send::{SyncableClosure, syncable_wrapped_closure};
-
-        #[cfg_attr(docsrs, doc(cfg(target_feature = "atomics")))]
-        pub struct SendOrientationWatcher {
-            #[allow(unused)]
-            resolve: SyncableClosure<dyn Fn(DeviceOrientationEvent) + Send + Sync>,
-            recv: async_channel::Receiver<Orientation>
-        }
-        
-        impl SendOrientationWatcher {
-            #[inline]
-            pub fn new () -> Result<Self> {
-                let (send, recv) = async_channel::unbounded();
-                let closure = Box::new(move |evt: DeviceOrientationEvent| {
-                    let send = send.clone();
-                    let fut = async move { let _ = send.send(Orientation::from(evt)).await; };
-                    wasm_bindgen_futures::spawn_local(fut);
-                });
-
-                let win = crate::window()?;
-                let listener = unsafe { syncable_wrapped_closure::<dyn Fn(DeviceOrientationEvent), _>(&closure) };
-                win.add_event_listener_with_callback_and_bool("deviceorientation", &listener, true)?;
-        
-                return Ok(Self {
-                    resolve: SyncableClosure::new(listener.sync(), closure),
-                    recv,
-                })
-            }
-        }
-        
-        impl Stream for SendOrientationWatcher {
-            type Item = Orientation;
-        
-            #[inline]
-            fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
-                self.recv.poll_next_unpin(cx)
-            }
-        }
-        
-        impl Drop for SendOrientationWatcher {
-            #[inline]
-            fn drop(&mut self) {        
-                let win = web_sys::window().unwrap();
-                unsafe {
-                    win.remove_event_listener_with_callback_and_bool("deviceorientation", self.resolve.function(), true).unwrap()
-                };
-            }
-        }        
-    }
-}
-
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct Motion {
     /// Amount of acceleration recorded by the device, in meters per second squared (m/s²).
-    /// The acceleration value does not include the effect of the gravity force, in contrast to [`acceleration_with_gravity`].
+    /// The acceleration value does not include the effect of the gravity force, in contrast to `acceleration_with_gravity`.
     pub acceleration: Vec3d,
     /// Amount of acceleration recorded by the device, in meters per second squared (m/s²).
-    /// Unlike [`acceleration`] which compensates for the influence of gravity,
+    /// Unlike `acceleration` which compensates for the influence of gravity,
     /// its value is the sum of the acceleration of the device as induced by the user and an acceleration equal and opposite to that caused by gravity.
     /// In other words, it measures the g-force. In practice, this value represents the raw data measured by an accelerometer.
     pub acceleration_with_gravity: Vec3d,
@@ -299,52 +239,6 @@ impl Drop for MotionWatcher {
 
         let win = web_sys::window().unwrap();
         win.remove_event_listener_with_callback_and_bool("devicemotion", listener, true).unwrap();
-    }
-}
-
-cfg_if::cfg_if! {
-    if #[cfg(any(test, target_feature = "atomics"))] {
-        pub struct SendMotionWatcher {
-            resolve: SyncableClosure<dyn Fn(DeviceMotionEvent) + Send + Sync>,
-            recv: async_channel::Receiver<Motion>
-        }
-        
-        impl SendMotionWatcher {
-            #[inline]
-            pub fn new () -> Result<Self> {
-                let (send, recv) = async_channel::unbounded();
-                let closure = Box::new(move |evt: DeviceMotionEvent| {
-                    let send = send.clone();
-                    let fut = async move { let _ = send.send(Motion::from(evt)).await; };
-                    wasm_bindgen_futures::spawn_local(fut);
-                });
-                let resolve = unsafe { syncable_wrapped_closure::<dyn Fn(DeviceMotionEvent), _>(&closure) };
-        
-                let win = web_sys::window().unwrap();
-                win.add_event_listener_with_callback_and_bool("devicemotion", &resolve, true)?;
-        
-                return Ok(Self {
-                    resolve: SyncableClosure::new(resolve.sync(), closure),
-                    recv,
-                })
-            }
-        }
-        
-        impl Stream for SendMotionWatcher {
-            type Item = Motion;
-        
-            #[inline]
-            fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
-                return self.recv.poll_next_unpin(cx)
-            }
-        }
-        
-        impl Drop for SendMotionWatcher {
-            fn drop(&mut self) {        
-                let win = web_sys::window().unwrap();
-                win.remove_event_listener_with_callback_and_bool("devicemotion", unsafe { self.resolve.function() }, true).unwrap();
-            }
-        }
     }
 }
 

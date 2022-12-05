@@ -33,7 +33,7 @@ fn test_notification () {
     Notification::new("Hello world!")
         .fire_after(Duration::from_secs(1))
         .close_after(Duration::from_secs(10))
-        .spawn_local();
+        .spawn();
 }
 
 fn test_geo () {

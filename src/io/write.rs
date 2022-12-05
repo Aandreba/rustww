@@ -39,6 +39,7 @@ impl Drop for JsWriteStream {
         if let Some(ref writer) = self.writer {
             writer.release_lock()
         }
+        let _ = self.stream.close();
     }
 }
 

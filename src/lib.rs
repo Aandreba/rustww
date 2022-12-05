@@ -67,9 +67,6 @@ pub mod io;
 /// Local Storage
 pub mod storage;
 
-/// Sendable
-pub mod send;
-
 mod utils;
 
 #[inline]
