@@ -200,6 +200,10 @@ impl Stream for JsReadStreamBytes {
     }
 }
 
+// SAFETY: ReadableStream is a [transferable object](https://developer.mozilla.org/en-US/docs/Glossary/Transferable_objects)
+unsafe impl Send for JsReadStream {}
+unsafe impl Sync for JsReadStream {}
+
 /*
 /// A rustfull wrapper arround a JavaScript byte [`ReadableStream`](web_sys::ReadableStream)
 pub struct JsReadByteStream {

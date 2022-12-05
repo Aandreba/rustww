@@ -15,20 +15,23 @@ extern {
     async fn get_battery (this: &web_sys::Navigator) -> Result<JsValue>;
 }
 
+/// Amount of battery remaining until the battery hits a battery stage fully
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BatteryTime {
-    /// Amount of time that remain until the battery is fully charged or 0 if the battery is already fully charged.
+    /// Amount of time that remains until the battery is fully charged or 0 if the battery is already fully charged.
     Charging (Duration),
     /// Amount of time that remains until the battery is fully discharged.
     Discharging (Duration)
 }
 
+/// Dynamic battery information.
 #[derive(Clone)]
 pub struct Battery {
     inner: web_sys::BatteryManager
 }
 
 impl Battery {
+    /// Creates a new battery information watcher
     pub async fn new () -> Result<Self> {
         let nav = window()?.navigator();
         let value = get_battery(&nav).await?;
@@ -45,26 +48,35 @@ impl Battery {
         return Ok(Self { inner })
     }
 
+    /// Creates a snapshot of the current battery information
     #[inline]
     pub fn new_snapshot () -> impl Future<Output = Result<Snapshot>> {
         return Snapshot::new()
     }
 
+    /// Creates a snapshot of the current battery information from this watcher
     #[inline]
     pub fn snapshot (&self) -> Snapshot {
         return Snapshot::from(&self.inner)
     }
 
+    /// Returns `true` if the battery is currently charging,
+    /// `false` if it isn't, the device is not battery-powered, or the information is unavailable
     #[inline]
     pub fn charging (&self) -> bool {
         self.inner.charging()
     }
 
+    /// Returns the current battery time information, if available.
     #[inline]
     pub fn battery_time (&self) -> Option<BatteryTime> {
         return BatteryTime::try_from(&self.inner).ok()
     }
 
+    /// Returns the current battery level between `0.0` and `1.0`.
+    /// - A value of `0.0` means the battery is empty and the system is about to be suspended. 
+    /// - A value of `1.0` means the battery is full.
+    /// - A value of `1.0` is also returned if the implementation isn't able to determine the battery charge level or if the system is not battery-powered.
     #[inline]
     pub fn level (&self) -> f64 {
         self.inner.level()
@@ -76,6 +88,7 @@ macro_rules! impl_watch {
     ) => {
         impl Battery {
             $(
+                #[doc = concat!("Returns a watcher of the battery's `", stringify!($name), "`.\nEvery time this value is updated, the watcher will be notified.")]
                 pub fn $fn (&self) -> Result<$watch> {
                     let (send, recv) = local_channel();
                     let resolve = Closure::<dyn FnMut(web_sys::Event)>::new(move |evt: web_sys::Event| {
@@ -105,6 +118,7 @@ macro_rules! impl_watch {
         }
 
         $(
+            #[doc = concat!("Watcher of a [`Battery`]'s [`", stringify!($name), "`](Battery::", stringify!($name),")")]
             pub struct $watch {
                 inner: web_sys::BatteryManager,
                 #[allow(unused)]
@@ -145,6 +159,8 @@ impl_watch! {
 }
 
 impl Battery {
+    /// Returns a watcher of the battery's `battery_time`.
+    /// Every time this value is updated, the watcher will be notified.
     pub fn watch_battery_time (&self) -> Result<BatteryTimeWatcher> {
         let (send, recv) = local_channel();
 
@@ -193,6 +209,7 @@ impl Battery {
     }
 }
 
+/// Watcher of a [`Battery`]'s [`battery_time`](Battery::battery_time)
 pub struct BatteryTimeWatcher {
     inner: BatteryManager,
     #[allow(unused)]
@@ -231,6 +248,7 @@ impl Drop for BatteryTimeWatcher {
     }
 }
 
+/// Snapshot of the battery iformation at a particular point in time.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct Snapshot {
@@ -245,6 +263,7 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// Creates a new snapshot of the current battery information
     #[inline]
     pub async fn new () -> Result<Self> {
         let nav = window()?.navigator();

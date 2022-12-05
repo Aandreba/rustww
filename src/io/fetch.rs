@@ -1,5 +1,4 @@
 use std::{rc::Rc, sync::Arc, fmt::Debug};
-use futures::{StreamExt, TryStreamExt};
 use js_sys::Uint8Array;
 use serde::{de::DeserializeOwned};
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen, JsCast};

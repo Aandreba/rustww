@@ -141,7 +141,7 @@ fn test_fs () -> Result<(), JsValue> {
                 .next()
                 .unwrap();
 
-            let meta = file.read_stream()
+            let meta = file.reader()
                 .await?
                 .read_remaining()
                 .await?;
