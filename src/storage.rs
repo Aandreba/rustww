@@ -96,6 +96,7 @@ pub struct StorageIter {
 }
 
 impl StorageIter {
+    /// Returns the next value of the iterator deserialized
     #[inline]
     pub fn next_value<T: DeserializeOwned> (&mut self) -> Option<Result<(String, T)>> {
         let (key, value) = match self.next()? {
@@ -109,6 +110,7 @@ impl StorageIter {
         };
     }
 
+    /// Returns the nth value of the iterator deserialized
     #[inline]
     pub fn nth_value<T: DeserializeOwned> (&mut self, n: usize) -> Option<Result<(String, T)>> {
         self.idx += u32::try_from(n).unwrap();
@@ -145,6 +147,7 @@ impl Iterator for StorageIter {
         self.next()
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let len = match self.inner.length() {
             Ok(len) => len - self.idx,

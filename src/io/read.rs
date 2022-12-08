@@ -1,5 +1,4 @@
 use std::{task::{Poll, Waker}, cell::Cell};
-use docfg::docfg;
 use futures::{Future, TryFutureExt, FutureExt, Stream, TryStreamExt};
 use js_sys::{Uint8Array};
 use wasm_bindgen::{JsCast, JsValue, prelude::{wasm_bindgen}};
@@ -23,25 +22,29 @@ pub struct JsReadStream {
     #[allow(unused)]
     stream: web_sys::ReadableStream,
     reader: Option<web_sys::ReadableStreamDefaultReader>,
-    #[cfg(web_sys_unstable_apis)]
-    pub(super) _builder: Option<super::builder::ReadBuilder>,
+    /*#[cfg(web_sys_unstable_apis)]
+    pub(super) _builder: Option<super::builder::ReadBuilder>,*/
     current: Option<NextChunk>,
     done: bool
 }
 
-impl JsReadStream {   
-    #[docfg(web_sys_unstable_apis)]
+impl JsReadStream {
+    /// Returns a builder for a custom [`JsReadStream`]
+    /*#[docfg(web_sys_unstable_apis)]
     #[inline]
     pub fn custom () -> super::builder::ReadBuilder {
         return super::builder::ReadBuilder::new()
-    }
+    }*/
 
+    /// Creates a new [`JsReadStream`]
     #[inline]
     pub fn new<T: Into<web_sys::ReadableStream>> (stream: T) -> Result<Self> {
         let stream = <T as Into<web_sys::ReadableStream>>::into(stream);
         return Ok(Self { stream, reader: None, #[cfg(web_sys_unstable_apis)] _builder: None, current: None, done: false })
     }
     
+    /// Creates a new [`JsReadStream`] from a teed [`ReadableStream`], assigning one of
+    /// the teed streams to `stream`, and the other into the reader.
     pub fn from_mut (stream: &mut web_sys::ReadableStream) -> Result<Self> {
         let tee = stream.tee();
 
@@ -56,11 +59,14 @@ impl JsReadStream {
         return Ok(Self { stream: this, reader: None, #[cfg(web_sys_unstable_apis)] _builder: None, current: None, done: false })
     }
     
+    /// Reads the remaining bytes in the stream into a `Vec<u8>`
     pub async fn read_remaining (&mut self) -> Result<Vec<u8>> {
         let mut result = Vec::<u8>::new();
+
         while let Some(chunk) = self.try_next().await? {
             let len = chunk.length() as usize;
             result.reserve(len);
+
             unsafe {
                 chunk.raw_copy_to_ptr(result.as_mut_ptr().add(result.len()));
                 result.set_len(result.len() + len);
@@ -70,6 +76,7 @@ impl JsReadStream {
         return Ok(result)
     }
 
+    /// Attempts to clone the [`JsReadStream`].
     pub async fn try_clone (&mut self) -> Result<Self> {
         // Wait for current chunk to finish
         while let Some(ref mut current) = self.current {
@@ -89,14 +96,7 @@ impl JsReadStream {
         return Self::new(clone)
     }
 
-    #[inline]
-    pub fn into_byte_stream (self) -> JsReadStreamBytes {
-        return JsReadStreamBytes {
-            inner: self,
-            buffer: None
-        }
-    }
-
+    /// Returns a [`Future`] that resolves when the next chunk of the stream is available
     #[inline]
     fn next_chunk (&mut self) -> NextChunk {
         let promise = self.get_reader().read();
@@ -147,62 +147,9 @@ impl Drop for JsReadStream {
         if let Some(ref reader) = self.reader {
             reader.release_lock()
         }
+        let _ = self.stream.cancel();
     }
 }
-
-pub struct JsReadStreamBytes {
-    inner: JsReadStream,
-    buffer: Option<ByteArray>
-}
-
-impl JsReadStreamBytes {
-    #[inline]
-    pub fn unzip (self) -> (JsReadStream, Option<Uint8Array>) {
-        return (self.inner, self.buffer.map(JsCast::unchecked_into))
-    }
-
-    #[inline]
-    pub async fn try_clone (&mut self) -> Result<Self> {
-        return Ok(Self {
-            inner: self.inner.try_clone().await?,
-            buffer: self.buffer.clone()
-        })
-    }
-}
-
-impl Stream for JsReadStreamBytes {
-    type Item = Result<u8>;
-
-    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
-        if let Some(ref buffer) = self.buffer {
-            let value = buffer.get_index(0);
-            self.buffer = match buffer.length() {
-                1 => None,
-                _ => Some(buffer.subarray(1))
-            };
-            return Poll::Ready(Some(Ok(value)))
-        }
-
-        if let Poll::Ready(result) = self.inner.try_poll_next_unpin(cx)? {
-            self.buffer = result.map(JsCast::unchecked_into);
-            
-            if let Some(ref buffer) = self.buffer {
-                let value = buffer.get_index(0);
-                self.buffer = match buffer.length() {
-                    1 => None,
-                    _ => Some(buffer.subarray(1))
-                };
-                return Poll::Ready(Some(Ok(value)))
-            }
-        }
-        
-        return Poll::Pending
-    }
-}
-
-// SAFETY: ReadableStream is a [transferable object](https://developer.mozilla.org/en-US/docs/Glossary/Transferable_objects)
-unsafe impl Send for JsReadStream {}
-unsafe impl Sync for JsReadStream {}
 
 /*
 /// A rustfull wrapper arround a JavaScript byte [`ReadableStream`](web_sys::ReadableStream)
@@ -319,7 +266,7 @@ impl TryFrom<JsValue> for ChunkResult {
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct ChunkResult {
+struct ChunkResult {
     pub done: bool,
     pub value: Option<Uint8Array>
 }
