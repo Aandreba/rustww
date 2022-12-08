@@ -16,6 +16,7 @@ macro_rules! impl_scalar_vec {
             }
 
             impl $name {
+                #[doc = concat!("Creates a new [`", stringify!($name), "`]")]
                 #[inline]
                 pub const fn new ($($vname: $ty),+) -> Self {
                     Self {
@@ -23,6 +24,7 @@ macro_rules! impl_scalar_vec {
                     }
                 }
 
+                #[doc = concat!("Creates a new [`", stringify!($name), "`] by expanding `v` into every lane")]
                 #[inline]
                 pub fn splat (v: $ty) -> Self {
                     Self {
@@ -33,27 +35,32 @@ macro_rules! impl_scalar_vec {
                 }
 
                 $(
+                    #[doc = concat!("Returns the `", stringify!($vname), "` component of the vector")]
                     #[inline]
                     pub fn $vname (self) -> $ty {
                         return self.$vname
                     }
                 )*
 
+                /// Calculates the dot product between the vectors
                 #[inline]
                 pub fn dot (self, rhs: Self) -> $ty {
                     return self * rhs
                 }
 
+                /// Calculates the squared magnitude of the vector
                 #[inline]
                 pub fn sq_magn (self) -> $ty {
                     return self * self
                 }
 
+                /// Calculates the magnitude of the vector
                 #[inline]
                 pub fn magn (self) -> $ty {
                     return <$ty>::sqrt(self.sq_magn());
                 }
 
+                /// Calculates the unit vector
                 #[inline]
                 pub fn unit (self) -> Self {
                     return self / self.magn()

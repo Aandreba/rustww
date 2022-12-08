@@ -16,51 +16,61 @@ pub struct Vec4f {
 }
 
 impl Vec4f {
+    #[doc = concat!("Creates a new [`Vec4f`]")]
     #[inline]
     pub const fn new (x: f32, y: f32, z: f32, w: f32) -> Self {
         return Self { inner: f32x4(x, y, z, w) }
     }
 
+    #[doc = concat!("Creates a new [`Vec4f`] by expanding `v` into every lane")]
     #[inline]
     pub fn splat (v: f32) -> Self {
         return Self { inner: f32x4_splat(v) }
     }
 
+    #[doc = concat!("Returns the `x` component of the vector")]
     #[inline]
     pub fn x (self) -> f32 {
         return f32x4_extract_lane::<0>(self.inner);
     }
 
+    #[doc = concat!("Returns the `y` component of the vector")]
     #[inline]
     pub fn y (self) -> f32 {
         return f32x4_extract_lane::<1>(self.inner);
     }
 
+    #[doc = concat!("Returns the `z` component of the vector")]
     #[inline]
     pub fn z (self) -> f32 {
         return f32x4_extract_lane::<2>(self.inner);
     }
 
+    #[doc = concat!("Returns the `w` component of the vector")]
     #[inline]
     pub fn w (self) -> f32 {
         return f32x4_extract_lane::<3>(self.inner);
     }
 
+    /// Calculates the dot product between the vectors
     #[inline]
     pub fn dot (self, rhs: Self) -> f32 {
         return self * rhs
     }
 
+    /// Calculates the squared magnitude of the vector
     #[inline]
     pub fn sq_magn (self) -> f32 {
         return self * self
     }
 
+    /// Calculates the magnitude of the vector
     #[inline]
     pub fn magn (self) -> f32 {
         return f32::sqrt(self.sq_magn());
     }
 
+    /// Calculates the unit vector
     #[inline]
     pub fn unit (self) -> Self {
         return self / self.magn()
@@ -168,41 +178,49 @@ pub struct Vec2d {
 }
 
 impl Vec2d {
+    #[doc = concat!("Creates a new [`Vec2d`]")]
     #[inline]
     pub const fn new (x: f64, y: f64) -> Self {
         return Self { inner: f64x2(x, y) }
     }
 
+    #[doc = concat!("Creates a new [`Vec2d`] by expanding `v` into every lane")]
     #[inline]
     pub fn splat (v: f64) -> Self {
         return Self { inner: f64x2_splat(v) }
     }
 
+    #[doc = concat!("Returns the `x` component of the vector")]
     #[inline]
     pub fn x (self) -> f64 {
         return f64x2_extract_lane::<0>(self.inner);
     }
 
+    #[doc = concat!("Returns the `y` component of the vector")]
     #[inline]
     pub fn y (self) -> f64 {
         return f64x2_extract_lane::<1>(self.inner);
     }
 
+    /// Calculates the dot product between the vectors
     #[inline]
     pub fn dot (self, rhs: Self) -> f64 {
         return self * rhs
     }
 
+    /// Calculates the squared magnitude of the vector
     #[inline]
     pub fn sq_magn (self) -> f64 {
         return self * self
     }
 
+    /// Calculates the magnitude of the vector
     #[inline]
     pub fn magn (self) -> f64 {
         return f64::sqrt(self.sq_magn());
     }
 
+    /// Calculates the unit vector
     #[inline]
     pub fn unit (self) -> Self {
         return self / self.magn()

@@ -11,132 +11,14 @@ const UNINIT: u8 = 0;
 const WORKING: u8 = 1;
 const INIT: u8 = 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-#[repr(transparent)]
-pub struct AssertSend<T> (T);
-
-impl<T> AssertSend<T> {
-    #[inline]
-    pub fn new (t: T) -> Self where T: Send {
-        return Self(t)
-    }
-
-    #[inline]
-    pub unsafe fn new_unchecked (t: T) -> Self {
-        return Self(t)
-    }
-
-    #[inline]
-    pub fn into_inner (self) -> T {
-        return self.0
-    }
-}
-
-impl<T> Deref for AssertSend<T> {
-    type Target = T;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> DerefMut for AssertSend<T> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-unsafe impl<T> Send for AssertSend<T> {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-#[repr(transparent)]
-pub struct AssertSync<T> (T);
-
-impl<T> AssertSync<T> {
-    #[inline]
-    pub fn new (t: T) -> Self where T: Sync {
-        return Self(t)
-    }
-
-    #[inline]
-    pub unsafe fn new_unchecked (t: T) -> Self {
-        return Self(t)
-    }
-
-    #[inline]
-    pub fn into_inner (self) -> T {
-        return self.0
-    }
-}
-
-impl<T> Deref for AssertSync<T> {
-    type Target = T;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> DerefMut for AssertSync<T> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-unsafe impl<T> Sync for AssertSync<T> {}
-
-pub struct OnceCell<T> {
-    sub: AsyncSubscribe,
-    flag: TakeCell<AsyncFlag>,
-    inner: UnsafeCell<MaybeUninit<T>>
-}
-
-impl<T> OnceCell<T> {
-    pub fn new () -> Self {
-        let flag = AsyncFlag::new();
-        let sub = flag.subscribe();
-
-        Self {
-            sub,
-            flag: TakeCell::new(flag),
-            inner: UnsafeCell::new(MaybeUninit::uninit())
-        }
-    }
-
-    #[inline]
-    pub fn try_set (&self, v: T) -> Result<(), T> {
-        if let Some(flag) = self.flag.try_take() {
-            unsafe {
-                (&mut *self.inner.get()).write(v);
-                flag.mark();
-                return Ok(())
-            }
-        }
-
-        return Err(v)
-    }
-
-    #[inline]
-    pub async fn get (&self) -> &T {
-        self.sub.clone().await;
-        return unsafe { (&*self.inner.get()).assume_init_ref() }
-    }
-}
-
-unsafe impl<T: Send> Send for OnceCell<T> {}
-unsafe impl<T: Sync> Sync for OnceCell<T> {}
-
 struct ChannelInner<T> {
     buffer: VecDeque<T>,
     waker: Option<Waker>
 }
 
+/// A local channel's receiver, designed to receive values from or inside JavaScript callbacks.
 pub struct LocalReceiver<T> {
-    inner: Rc<WasmRefCell<ChannelInner<T>>>
+    inner: Rc<UnsafeCell<ChannelInner<T>>>
 }
 
 impl<T> Stream for LocalReceiver<T> {
@@ -144,7 +26,7 @@ impl<T> Stream for LocalReceiver<T> {
 
     #[inline]
     fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = unsafe { &mut *self.inner.get() };
 
         if let Some(value) = inner.buffer.pop_front() {
             return Poll::Ready(Some(value))
@@ -158,7 +40,7 @@ impl<T> Stream for LocalReceiver<T> {
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let inner = self.inner.borrow();
+        let inner = unsafe { &*self.inner.get() };
         let size = inner.buffer.len();
 
         if Rc::weak_count(&self.inner) == 0 {
@@ -169,20 +51,25 @@ impl<T> Stream for LocalReceiver<T> {
     }
 }
 
+/// A local channel's sender, designed to send values from or into JavaScript callbacks.
 pub struct LocalSender<T> {
-    inner: Weak<WasmRefCell<ChannelInner<T>>>
+    inner: Weak<UnsafeCell<ChannelInner<T>>>
 }
 
 impl<T> LocalSender<T> {
+    /// Attempts to send the value through the channel, panicking if it fails.
     #[inline]
     pub fn send (&self, v: T) where T: Debug {
         self.try_send(v).unwrap()
     }
     
+    /// Attempts to send the value through the channel, returning it if it fails.
+    /// 
+    /// A send through the channel will fail if there are no receivers left.
     #[inline]
     pub fn try_send (&self, v: T) -> ::core::result::Result<(), T> {
         if let Some(inner) = self.inner.upgrade() {
-            let mut inner = inner.borrow_mut();
+            let mut inner = unsafe { &mut *inner.get() };
             inner.buffer.push_back(v);
             if let Some(waker) = inner.waker.take() { waker.wake() }
             return Ok(())
@@ -200,9 +87,11 @@ impl<T> Clone for LocalSender<T> {
     }
 }
 
+/// Creates a new local channel, which can be used to send values from (and into) JavaScript callbacks,
+/// which are known to be executed on a single thread, but aren't attached to a specific scope. 
 #[inline]
 pub fn local_channel<T> () -> (LocalSender<T>, LocalReceiver<T>) {
-    let inner = Rc::new(WasmRefCell::new(ChannelInner {
+    let inner = Rc::new(UnsafeCell::new(ChannelInner {
         buffer: VecDeque::new(),
         waker: None
     }));
@@ -210,6 +99,7 @@ pub fn local_channel<T> () -> (LocalSender<T>, LocalReceiver<T>) {
     return (LocalSender { inner: Rc::downgrade(&inner) }, LocalReceiver { inner });
 }
 
+/// Receiver to a local one-shot channel
 pub struct ShotReceiver<T> {
     pub(crate) inner: Rc<FutureInner<T>>
 }
@@ -220,7 +110,7 @@ impl<T> Future for ShotReceiver<T> {
     #[inline]
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
         if let Some(geo) = self.inner.value.take() {
-            return Poll::Ready(geo);
+            return Poll::Ready(geo.expect("Value has already been taken"));
         }
 
         self.inner.waker.set(Some(cx.waker().clone()));
@@ -228,15 +118,19 @@ impl<T> Future for ShotReceiver<T> {
     }
 }
 
+/// Sender of a local one-shot channel
 pub struct ShotSender<T> {
     inner: Weak<FutureInner<T>>
 }
 
 impl<T> ShotSender<T> {
+    /// Attempts to send the value through the channel, returning it if it fails.
+    /// 
+    /// A send through the channel fails of a value has already been sent through it.
     #[inline]
     pub fn try_send (&self, v: T) -> Result<(), T> {
         if let Some(inner) = self.inner.upgrade() {    
-            inner.value.set(Some(v));
+            inner.value.set(Some(Some(v)));
             if let Some(waker) = inner.waker.take() {
                 waker.wake();
             }
@@ -253,14 +147,15 @@ impl<T> Clone for ShotSender<T> {
     }
 }
 
+/// Creates a new local one-shot channel, which is optimized to be able to send a single value.
 #[inline]
-pub(crate) fn one_shot<T> () -> (ShotSender<T>, ShotReceiver<T>) {
+pub fn one_shot<T> () -> (ShotSender<T>, ShotReceiver<T>) {
     let inner = Rc::new(FutureInner::default());
     return (ShotSender { inner: Rc::downgrade(&inner) }, ShotReceiver { inner })
 }
 
 pub(crate) struct FutureInner<T> {
-    pub(crate) value: Cell<Option<T>>,
+    pub(crate) value: Cell<Option<Option<T>>>,
     pub(crate) waker: Cell<Option<Waker>>
 }
 

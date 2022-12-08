@@ -16,6 +16,7 @@ macro_rules! impl_extended {
             }
 
             impl $name {
+                #[doc = concat!("Creates a new [`", stringify!($name), "`]")]
                 #[inline]
                 pub const fn new ($($field1: $ty,)+ $($field2: $ty),+) -> Self {
                     Self {
@@ -24,6 +25,7 @@ macro_rules! impl_extended {
                     }
                 }
 
+                #[doc = concat!("Creates a new [`", stringify!($name), "`] by expanding `v` into every lane")]
                 #[inline]
                 pub fn splat (v: $ty) -> Self {
                     Self {
@@ -33,6 +35,7 @@ macro_rules! impl_extended {
                 }
 
                 $(
+                    #[doc = concat!("Returns the `", stringify!($field1), "` component of the vector")]
                     #[inline]
                     pub fn $field1 (self) -> $ty {
                         return self.field1.$field1()
@@ -40,27 +43,32 @@ macro_rules! impl_extended {
                 )+
 
                 $(
+                    #[doc = concat!("Returns the `", stringify!($field2), "` component of the vector")]
                     #[inline]
                     pub fn $field2 (self) -> $ty {
                         return self.field2.$prevfield2()
                     }
                 )+
 
+                /// Calculates the dot product between the vectors
                 #[inline]
                 pub fn dot (self, rhs: Self) -> $ty {
                     return self * rhs
                 }
 
+                /// Calculates the squared magnitude of the vector
                 #[inline]
                 pub fn sq_magn (self) -> $ty {
                     return self * self
                 }
 
+                /// Calculates the magnitude of the vector
                 #[inline]
                 pub fn magn (self) -> $ty {
                     return <$ty>::sqrt(self.sq_magn());
                 }
 
+                /// Calculates the unit vector
                 #[inline]
                 pub fn unit (self) -> Self {
                     return self / self.magn()

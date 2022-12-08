@@ -1,7 +1,9 @@
-use std::time::Duration;
+#![allow(unused)]
+
+use std::{time::Duration, cell::Cell};
 use futures::{TryStreamExt, StreamExt, join, AsyncReadExt};
 use js_sys::Uint8Array;
-use rustww::{notify::{Notification}, geo::Geolocation, orient::{Orientation, Motion}, math::*, battery::Battery, io::{JsReadStream, Request}, fs::File, task::spawn_catch_local};
+use rustww::{notify::{Notification}, geo::Geolocation, orient::{Orientation, Motion}, math::*, battery::Battery, io::{JsReadStream, Request}, fs::File, task::spawn_catch_local, time::Interval, Result, log};
 use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsValue, JsCast};
 use web_sys::{window, Response, Blob};
 
@@ -17,8 +19,8 @@ pub fn main () {
 }
 
 #[wasm_bindgen]
-pub fn runner () -> Result<(), JsValue> {
-    test_fs()?;
+pub fn runner () -> Result<()> {
+    test_interval()?;
     Ok(())
 }
 
@@ -28,6 +30,24 @@ fn test_thread () {
         log("Hello world!");
     });
 }
+
+fn test_interval () -> Result<()> {
+    spawn_catch_local(async move {
+        let mut x = 0;
+        let int = Interval::new(
+            Duration::from_secs(1),
+            move || {
+                x += 1;
+                log!(x);
+            }
+        )?;
+    
+        let _ = Interval::leak(int);
+        Ok(())
+    });
+
+    Ok(())
+} 
 
 fn test_notification () {
     Notification::new("Hello world!")
@@ -126,7 +146,7 @@ fn test_fetch_and_read () {
     });
 }
 
-fn test_fs () -> Result<(), JsValue> {
+fn test_fs () -> Result<()> {
     let elem = window()
         .unwrap()
         .document()

@@ -21,33 +21,39 @@ macro_rules! impl_padded {
                     Self::const_splat(core::mem::transmute(!0)).inner.inner
                 };
 
+                #[doc = concat!("Creates a new [`", stringify!($name), "`]")]
                 #[inline]
                 pub const fn new ($($field: $ty),+) -> Self {
                     return Self { inner: <$parent>::new($($field,)+ $($zero),+) };
                 }
 
                 $(
+                    #[doc = concat!("Returns the `", stringify!($field), "` component of the vector")]
                     #[inline]
                     pub fn $field (self) -> $ty {
                         return self.inner.$field()
                     }
                 )+
 
+                /// Calculates the dot product between the vectors
                 #[inline]
                 pub fn dot (self, rhs: Self) -> $ty {
                     return self * rhs
                 }
 
+                /// Calculates the squared magnitude of the vector
                 #[inline]
                 pub fn sq_magn (self) -> $ty {
                     return self.inner.sq_magn()
                 }
 
+                /// Calculates the magnitude of the vector
                 #[inline]
                 pub fn magn (self) -> $ty {
                     return self.inner.magn()
                 }
 
+                /// Calculates the unit vector
                 #[inline]
                 pub fn unit (self) -> Self {
                     return self / self.magn()
@@ -142,6 +148,7 @@ impl_padded! {
 }
 
 impl Vec2f {
+    #[doc = concat!("Creates a new [`Vec2f`] by expanding `v` into every lane")]
     #[inline]
     pub fn splat (v: f32) -> Self {
         return Self::new(v, v);
@@ -154,6 +161,7 @@ impl Vec2f {
 }
 
 impl Vec3f {
+    #[doc = concat!("Creates a new [`Vec3f`] by expanding `v` into every lane")]
     #[inline]
     pub fn splat (v: f32) -> Self {
         return Self::new(v, v, v);

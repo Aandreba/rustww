@@ -117,7 +117,7 @@ impl Drop for OrientationWatcher {
             if #[cfg(debug_assertions)] {
                 listener = self._resolve.as_ref().dyn_ref().unwrap();
             } else {
-                listener = self.resolve.as_ref().unchecked_ref();
+                listener = self._resolve.as_ref().unchecked_ref();
             }
         }
 

@@ -1,4 +1,5 @@
 use std::{task::{Poll, Waker}, cell::Cell};
+use docfg::docfg;
 use futures::{Future, TryFutureExt, FutureExt, Stream, TryStreamExt};
 use js_sys::{Uint8Array};
 use wasm_bindgen::{JsCast, JsValue, prelude::{wasm_bindgen}};
@@ -22,19 +23,19 @@ pub struct JsReadStream {
     #[allow(unused)]
     stream: web_sys::ReadableStream,
     reader: Option<web_sys::ReadableStreamDefaultReader>,
-    /*#[cfg(web_sys_unstable_apis)]
-    pub(super) _builder: Option<super::builder::ReadBuilder>,*/
+    #[cfg(web_sys_unstable_apis)]
+    pub(super) _builder: Option<super::builder::ReadBuilder>,
     current: Option<NextChunk>,
     done: bool
 }
 
 impl JsReadStream {
     /// Returns a builder for a custom [`JsReadStream`]
-    /*#[docfg(web_sys_unstable_apis)]
+    #[docfg(web_sys_unstable_apis)]
     #[inline]
     pub fn custom () -> super::builder::ReadBuilder {
         return super::builder::ReadBuilder::new()
-    }*/
+    }
 
     /// Creates a new [`JsReadStream`]
     #[inline]
