@@ -36,4 +36,7 @@ rustdoc-args = ["--cfg", "docsrs", "--cfg", "web_sys_unstable_apis"]
 #[target.'cfg(all(target_family = "wasm", target_feature = "simd128"))'.package.metadata]
 
 [workspace]
-members = ["tests", "server"]
+members = ["server_tests", "server"]
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3.33"
