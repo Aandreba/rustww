@@ -1,6 +1,6 @@
 use std::{time::{SystemTime, Duration}, fmt::Debug, ops::{Deref, RangeInclusive}, io::SeekFrom};
 use chrono::{DateTime, Utc, NaiveDateTime};
-use js_sys::{Array};
+use js_sys::{Array, Uint8Array};
 use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Window, HtmlInputElement};
@@ -98,7 +98,7 @@ impl File {
 
     /// Returns a [`JsReadStream`] that can be used to read the contents of the file
     #[inline]
-    pub async fn reader (&mut self) -> Result<JsReadStream<'static>> {
+    pub async fn reader (&mut self) -> Result<JsReadStream<'static, Uint8Array>> {
         let read = self.get_read().await?;
         return JsReadStream::new(read.stream());
     }

@@ -233,14 +233,14 @@ impl Response {
     /// Returns the body of the reponse as a [`JsReadStream`], if available.
     /// Otherwise, `None` is returned.
     #[inline]
-    pub fn body (self) -> Result<Option<JsReadStream<'static>>> {
+    pub fn body (self) -> Result<Option<JsReadStream<'static, Uint8Array>>> {
         return self.inner.body().map(JsReadStream::new).transpose()
     }
 
     /// Attempts to convert the [`Response`] into it's body, returning itself as an error
     /// if it doesn't have one.
     #[inline]
-    pub fn try_body (self) -> Result<::core::result::Result<JsReadStream<'static>, Self>> {
+    pub fn try_body (self) -> Result<::core::result::Result<JsReadStream<'static, Uint8Array>, Self>> {
         return match self.inner.body() {
             Some(x) => JsReadStream::new(x).map(Ok),
             None => Ok(Err(self))
@@ -276,7 +276,7 @@ impl Response {
     /// Returns the response's body as a byte sequence
     pub async fn bytes (self) -> Result<Vec<u8>> {
         return match self.try_body()? {
-            Ok(mut body) => body.read_remaining().await,
+            Ok(mut body) => body.read_remaining_bytes().await,
             Err(this) => {
                 let value = JsFuture::from(this.inner.array_buffer()?).await?;
                 let buffer = value.unchecked_into::<js_sys::ArrayBuffer>();
@@ -290,7 +290,7 @@ impl Response {
     pub async fn text (self) -> Result<String> {
         return match self.try_body()? {
             Ok(mut body) => {
-                let bytes = body.read_remaining().await?;
+                let bytes = body.read_remaining_bytes().await?;
                 match String::from_utf8(bytes) {
                     Ok(string) => Ok(string),
                     Err(e) => Err(JsValue::from_str(&e.to_string()))
@@ -310,7 +310,7 @@ impl Response {
     pub async fn json<T: DeserializeOwned> (self) -> Result<T> {
         return match self.try_body()? {
             Ok(mut body) => {
-                let bytes = body.read_remaining().await?;
+                let bytes = body.read_remaining_bytes().await?;
                 match serde_json::from_slice::<T>(&bytes) {
                     Ok(json) => Ok(json),
                     Err(e) => Err(JsValue::from_str(&e.to_string()))

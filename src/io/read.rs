@@ -1,10 +1,10 @@
-use std::{task::{Poll, Waker}, cell::Cell, marker::PhantomData};
+use std::{task::{Poll}, marker::PhantomData};
 use docfg::docfg;
 use futures::{Future, TryFutureExt, FutureExt, Stream, TryStreamExt};
-use js_sys::{Uint8Array, JsString};
+use js_sys::{Uint8Array};
 use wasm_bindgen::{JsCast, JsValue, prelude::{wasm_bindgen}};
 use wasm_bindgen_futures::JsFuture;
-use crate::{Result, utils::{as_typed_array}};
+use crate::{Result, utils::{TypedArray}};
 use super::IntoFetchBody;
 
 #[wasm_bindgen]
@@ -18,33 +18,52 @@ extern "C" {
 }
 
 /// A rustfull wrapper arround a JavaScript [`ReadableStream`](web_sys::ReadableStream)
-pub struct JsReadStream<'a> {
+pub struct JsReadStream<'a, T> {
     #[allow(unused)]
     stream: web_sys::ReadableStream,
     reader: Option<web_sys::ReadableStreamDefaultReader>,
     #[cfg(web_sys_unstable_apis)]
-    pub(super) _builder: Option<super::builder::ReadBuilder<'a>>,
+    pub(super) _builder: Option<super::builder::ReadBuilder<'a, T>>,
     current: Option<NextChunk>,
     done: bool,
-    _phtm: PhantomData<&'a mut &'a ()>
+    _phtm: PhantomData<&'a T>
 }
 
-impl<'a> JsReadStream<'a> {
+impl<T: TypedArray> JsReadStream<'_, T> {
+    /// Reads the remaining bytes in the stream into a `Vec<u8>`
+    pub async fn read_remaining_bytes (&mut self) -> Result<Vec<u8>> {
+        let mut result = Vec::<u8>::new();
+
+        while let Some(chunk) = self.try_next().await? {
+            let len = chunk.length() as usize;
+            result.reserve(len);
+
+            unsafe {
+                chunk.raw_copy_to_ptr(result.as_mut_ptr().add(result.len()));
+                result.set_len(result.len() + len);
+            }
+        }
+
+        return Ok(result)
+    }
+}
+
+impl<'a, T: JsCast> JsReadStream<'a, T> {
     /// Returns a builder for a custom [`JsReadStream`]
     #[docfg(web_sys_unstable_apis)]
     #[inline]
-    pub fn custom () -> super::builder::ReadBuilder<'a> {
+    pub fn custom () -> super::builder::ReadBuilder<'a, T> {
         return super::builder::ReadBuilder::new()
     }
 
     /// Creates a new [`JsReadStream`]
     #[inline]
-    pub fn new<T: Into<web_sys::ReadableStream>> (stream: T) -> Result<Self> {
+    pub fn new<S: Into<web_sys::ReadableStream>> (stream: S) -> Result<Self> {
         let stream = <T as Into<web_sys::ReadableStream>>::into(stream);
         return Ok(Self { stream, reader: None, #[cfg(web_sys_unstable_apis)] _builder: None, current: None, done: false, _phtm: PhantomData })
     }
     
-    /// Creates a new [`JsReadStream`] from a teed [`ReadableStream`], assigning one of
+    /// Creates a new [`JsReadStream`] from a teed [`ReadableStream`](web_sys::ReadableStream), assigning one of
     /// the teed streams to `stream`, and the other into the reader.
     pub fn from_mut (stream: &mut web_sys::ReadableStream) -> Result<Self> {
         let tee = stream.tee();
@@ -60,18 +79,11 @@ impl<'a> JsReadStream<'a> {
         return Ok(Self { stream: this, reader: None, #[cfg(web_sys_unstable_apis)] _builder: None, current: None, done: false, _phtm: PhantomData })
     }
 
-    /// Reads the remaining bytes in the stream into a `Vec<u8>`
-    pub async fn read_remaining (&mut self) -> Result<Vec<u8>> {
-        let mut result = Vec::<u8>::new();
-
+    /// Reads the remaining values in the stream into a `Vec`
+    pub async fn read_remaining (&mut self) -> Result<Vec<T>> {
+        let mut result = Vec::<T>::new();
         while let Some(chunk) = self.try_next().await? {
-            let len = chunk.length() as usize;
-            result.reserve(len);
-
-            unsafe {
-                chunk.raw_copy_to_ptr(result.as_mut_ptr().add(result.len()));
-                result.set_len(result.len() + len);
-            }
+            result.push(chunk)
         }
 
         return Ok(result)
@@ -82,7 +94,7 @@ impl<'a> JsReadStream<'a> {
     fn next_chunk (&mut self) -> NextChunk {
         let promise = self.get_reader().read();
         let future = JsFuture::from(promise.clone());
-        return NextChunk { future, waker: Cell::new(None) }
+        return NextChunk { future }
     }
 
     fn get_reader (&mut self) -> &web_sys::ReadableStreamDefaultReader {
@@ -97,8 +109,8 @@ impl<'a> JsReadStream<'a> {
     }
 }
 
-impl Stream for JsReadStream<'_> {
-    type Item = Result<Uint8Array>;
+impl<T: JsCast> Stream for JsReadStream<'_, T> {
+    type Item = Result<T>;
 
     fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
         if self.done { return Poll::Ready(None) }
@@ -110,7 +122,7 @@ impl Stream for JsReadStream<'_> {
             self.current = None;
 
             if let Some(value) = value {
-                return Poll::Ready(Some(Ok(value)));
+                return Poll::Ready(Some(JsCast::dyn_into(value)));
             } else if done {
                 return Poll::Ready(None)
             }
@@ -120,14 +132,14 @@ impl Stream for JsReadStream<'_> {
     }
 }
 
-impl IntoFetchBody for JsReadStream<'static> {
+impl IntoFetchBody for JsReadStream<'static, Uint8Array> {
     #[inline]
     fn into_body (self) -> Option<JsValue> {
         return Some(self.stream.clone().into())
     }
 }
 
-impl Drop for JsReadStream<'_> {
+impl<T> Drop for JsReadStream<'_, T> {
     #[inline]
     fn drop(&mut self) {
         if let Some(ref reader) = self.reader {
@@ -205,8 +217,7 @@ impl Drop for JsReadByteStream {
 
 /// Future for [`next_chunk`](JsReadStream::next_chunk)
 struct NextChunk {
-    future: JsFuture,
-    waker: Cell<Option<Waker>>
+    future: JsFuture
 }
 
 impl Future for NextChunk {
@@ -215,7 +226,6 @@ impl Future for NextChunk {
     #[inline]
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         if let Poll::Ready(result) = self.future.try_poll_unpin(cx)? {
-            if let Some(waker) = self.waker.take() { waker.wake() }
             return Poll::Ready(ChunkResult::try_from(&result))
         }
 
@@ -227,15 +237,13 @@ impl TryFrom<&JsValue> for ChunkResult {
     type Error = JsValue;
 
     fn try_from(result: &JsValue) -> Result<Self> {
-        let done = unsafe {
-            js_sys::Reflect::get(result, &JsValue::from_str("done"))?
-                .as_bool()
-                .unwrap_unchecked()
+        let done = match js_sys::Reflect::get(result, &JsValue::from_str("done"))?.as_bool() {
+            Some(x) => x,
+            None => return Err(JsValue::from_str("`done` field not found"))
         };
 
         let value = js_sys::Reflect::get(result, &JsValue::from_str("value"))?;
         if value.is_null() || value.is_undefined() { return Ok(Self { done, value: None }) }
-        let value = chunk_into_bytes(value)?;
         return Ok(Self { done, value: Some(value) })
     }
 }
@@ -253,31 +261,5 @@ impl TryFrom<JsValue> for ChunkResult {
 #[non_exhaustive]
 struct ChunkResult {
     pub done: bool,
-    pub value: Option<Uint8Array>
-}
-
-fn chunk_into_bytes (chunk: JsValue) -> Result<Uint8Array> {
-    if let Some(array) = as_typed_array(&chunk) {
-        return Ok(Uint8Array::new_with_byte_offset_and_length(
-            &array.buffer(),
-            array.byte_offset(),
-            array.byte_length()
-        ));
-    }
-
-    if chunk.is_instance_of::<JsString>() {
-        #[wasm_bindgen]
-        extern "C" {
-            #[wasm_bindgen(js_name = TextEncoder, extends = web_sys::TextEncoder)]
-            type TextEncoderExt;
-
-            #[wasm_bindgen(method, catch)]
-            fn encode (this: &TextEncoderExt, s: &js_sys::JsString) -> Result<Uint8Array>;
-        }
-
-        let encoder = web_sys::TextEncoder::new()?.unchecked_into::<TextEncoderExt>();
-        return encoder.encode(chunk.unchecked_ref());
-    }
-
-    return Err(JsValue::from_str(&format!("Unknown chunk type")))
+    pub value: Option<JsValue>
 }
