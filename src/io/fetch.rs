@@ -233,14 +233,14 @@ impl Response {
     /// Returns the body of the reponse as a [`JsReadStream`], if available.
     /// Otherwise, `None` is returned.
     #[inline]
-    pub fn body (self) -> Result<Option<JsReadStream>> {
+    pub fn body (self) -> Result<Option<JsReadStream<'static>>> {
         return self.inner.body().map(JsReadStream::new).transpose()
     }
 
     /// Attempts to convert the [`Response`] into it's body, returning itself as an error
     /// if it doesn't have one.
     #[inline]
-    pub fn try_body (self) -> Result<::core::result::Result<JsReadStream, Self>> {
+    pub fn try_body (self) -> Result<::core::result::Result<JsReadStream<'static>, Self>> {
         return match self.inner.body() {
             Some(x) => JsReadStream::new(x).map(Ok),
             None => Ok(Err(self))

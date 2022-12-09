@@ -98,7 +98,7 @@ impl File {
 
     /// Returns a [`JsReadStream`] that can be used to read the contents of the file
     #[inline]
-    pub async fn reader (&mut self) -> Result<JsReadStream> {
+    pub async fn reader (&mut self) -> Result<JsReadStream<'static>> {
         let read = self.get_read().await?;
         return JsReadStream::new(read.stream());
     }

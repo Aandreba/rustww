@@ -5,31 +5,33 @@ use js_sys::*;
 use crate::Result;
 use super::*;
 use wasm_bindgen::Clamped;
+use core::marker::PhantomData;
+use wasm_bindgen::closure::WasmClosureFnOnce;
 
 #[derive(Debug)]
-enum MaybePromise<T> {
-    Blocking (Closure<dyn FnMut(T) -> Result<()>>),
-    Promise (Closure<dyn FnMut(T) -> js_sys::Promise>)
+enum MaybePromise<'a, T> {
+    Blocking (Closure<dyn FnMut(T) -> Result<()>>, PhantomData<&'a mut &'a dyn FnMut(T) -> Result<()>>),
+    Promise (Closure<dyn FnMut(T) -> js_sys::Promise>, PhantomData<&'a mut &'a dyn FnMut(T) -> js_sys::Promise>)
 }
 
-impl<T> AsRef<JsValue> for MaybePromise<T> {
+impl<T> AsRef<JsValue> for MaybePromise<'_, T> {
     #[inline]
     fn as_ref(&self) -> &JsValue {
         match self {
-            Self::Blocking(x) => x.as_ref(),
-            Self::Promise(x) => x.as_ref()
+            Self::Blocking(x, _) => x.as_ref(),
+            Self::Promise(x, _) => x.as_ref()
         }
     }
 }
 
 #[derive(Debug, Default)]
-pub struct ReadBuilder {
-    start: Option<MaybePromise<ReadableStreamDefaultController>>,
-    pull: Option<MaybePromise<ReadableStreamDefaultController>>,
-    cancel: Option<MaybePromise<JsValue>>
+pub struct ReadBuilder<'a> {
+    start: Option<MaybePromise<'a, ReadableStreamDefaultController>>,
+    pull: Option<MaybePromise<'a, ReadableStreamDefaultController>>,
+    cancel: Option<MaybePromise<'a, JsValue>>
 }
 
-impl ReadBuilder {
+impl<'a> ReadBuilder<'a> {
     #[inline]
     pub fn new () -> Self {
         return Default::default()
@@ -37,62 +39,106 @@ impl ReadBuilder {
 
     /// This is a method, called immediately when the object is constructed. The contents of this method are defined by the developer, and should aim to get access to the stream source, and do anything else required to set up the stream functionality.
     #[inline]
-    pub fn start<F: 'static + FnOnce(ReadStreamController) -> Result<()>> (mut self, f: F) -> Self {
-        self.start = Some(MaybePromise::Blocking(Closure::once(|inner| f(ReadStreamController { inner }))));
+    pub fn start<F: 'a + FnOnce(ReadStreamController) -> Result<()>> (mut self, f: F) -> Self {
+        let f = move |inner| f(ReadStreamController { inner });
+        let f = unsafe {
+            core::mem::transmute::<
+                Box<dyn 'a + FnOnce(ReadableStreamDefaultController) -> Result<()>>,
+                Box<dyn 'static + FnOnce(ReadableStreamDefaultController) -> Result<()>>,
+            >(Box::new(f))
+        };
+
+        self.start = Some(MaybePromise::Blocking(Closure::wrap(f.into_fn_mut()), PhantomData));
         self
     }
 
     /// This is a method, called immediately when the object is constructed. The contents of this method are defined by the developer, and should aim to get access to the stream source, and do anything else required to set up the stream functionality.
     #[inline]
-    pub fn start_async<F: 'static + FnOnce(ReadStreamController) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
+    pub fn start_async<F: 'a + FnOnce(ReadStreamController) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
         let f = move |inner| {
             let fut = f(ReadStreamController { inner }).map_ok(|_| JsValue::UNDEFINED);
             return wasm_bindgen_futures::future_to_promise(fut)
         };
 
-        self.start = Some(MaybePromise::Promise(Closure::once(f)));
+        let f = unsafe {
+            core::mem::transmute::<
+                Box<dyn 'a + FnOnce(ReadableStreamDefaultController) -> js_sys::Promise>,
+                Box<dyn 'static + FnOnce(ReadableStreamDefaultController) -> js_sys::Promise>,
+            >(Box::new(f))
+        };
+
+        self.start = Some(MaybePromise::Promise(Closure::wrap(f.into_fn_mut()), PhantomData));
         self
     }
 
     /// This method, also defined by the developer, will be called repeatedly when the stream's internal queue of chunks is not full, up until it reaches its high water mark.
     #[inline]
-    pub fn pull<F: 'static + FnMut(ReadStreamController) -> Result<()>> (mut self, f: F) -> Self {
-        self.pull = Some(MaybePromise::Blocking(Closure::new(|inner| f(ReadStreamController { inner }))));
+    pub fn pull<F: 'a + FnMut(ReadStreamController) -> Result<()>> (mut self, mut f: F) -> Self {
+        let f = move |inner| f(ReadStreamController { inner });
+        let f = unsafe {
+            core::mem::transmute::<
+                Box<dyn 'a + FnMut(ReadableStreamDefaultController) -> Result<()>>,
+                Box<dyn 'static + FnMut(ReadableStreamDefaultController) -> Result<()>>,
+            >(Box::new(f))
+        };
+
+        self.pull = Some(MaybePromise::Blocking(Closure::wrap(f), PhantomData));
         self
     }
 
     /// This method, also defined by the developer, will be called repeatedly when the stream's internal queue of chunks is not full, up until it reaches its high water mark.
     #[inline]
-    pub fn pull_async<F: 'static + FnMut(ReadableStreamDefaultController) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, mut f: F) -> Self {
+    pub fn pull_async<F: 'a + FnMut(ReadStreamController) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, mut f: F) -> Self {
         let f = move |inner| {
             let fut = f(ReadStreamController { inner }).map_ok(|_| JsValue::UNDEFINED);
             return wasm_bindgen_futures::future_to_promise(fut)
         };
 
-        self.pull = Some(MaybePromise::Promise(Closure::new(f)));
+        let f = unsafe {
+            core::mem::transmute::<
+                Box<dyn 'a + FnMut(ReadableStreamDefaultController) -> js_sys::Promise>,
+                Box<dyn 'static + FnMut(ReadableStreamDefaultController) -> js_sys::Promise>,
+            >(Box::new(f))
+        };
+
+        self.pull = Some(MaybePromise::Promise(Closure::wrap(f), PhantomData));
         self
     }
 
     /// This method, also defined by the developer, will be called if the app signals that the stream is to be cancelled
     #[inline]
-    pub fn cancel<F: 'static + FnOnce(JsValue) -> Result<()>> (mut self, f: F) -> Self {
-        self.cancel = Some(MaybePromise::Blocking(Closure::once(f)));
+    pub fn cancel<F: 'a + FnOnce(JsValue) -> Result<()>> (mut self, f: F) -> Self {
+        let f = unsafe {
+            core::mem::transmute::<
+                Box<dyn 'a + FnOnce(JsValue) -> Result<()>>,
+                Box<dyn 'static + FnOnce(JsValue) -> Result<()>>,
+            >(Box::new(f))
+        };
+
+        self.cancel = Some(MaybePromise::Blocking(Closure::wrap(f.into_fn_mut()), PhantomData));
         self
     }
 
     /// This method, also defined by the developer, will be called if the app signals that the stream is to be cancelled
     #[inline]
-    pub fn cancel_async<F: 'static + FnOnce(JsValue) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
+    pub fn cancel_async<F: 'a + FnOnce(JsValue) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
         let f = move |c| {
             let fut = f(c).map_ok(|_| JsValue::UNDEFINED);
             return wasm_bindgen_futures::future_to_promise(fut)
         };
 
-        self.cancel = Some(MaybePromise::Promise(Closure::once(f)));
+        let f = unsafe {
+            core::mem::transmute::<
+                Box<dyn 'a + FnOnce(JsValue) -> js_sys::Promise>,
+                Box<dyn 'static + FnOnce(JsValue) -> js_sys::Promise>,
+            >(Box::new(f))
+        };
+
+        self.cancel = Some(MaybePromise::Promise(Closure::wrap(f.into_fn_mut()), PhantomData));
         self
     }
 
-    pub fn build (self) -> Result<JsReadStream> {
+    pub fn build (self) -> Result<JsReadStream<'a>> {
         macro_rules! set {
             ($($name:ident [$key:literal] = $value:expr;)+) => {
                 $(
@@ -134,7 +180,7 @@ impl ReadStreamController {
     }
 
     #[inline]
-    pub fn desired_size (&self) -> Result<f64> {
+    pub fn desired_size (&self) -> Option<f64> {
         self.inner.desired_size()
     }
 
@@ -182,6 +228,13 @@ macro_rules! impl_chunk {
                     }
                 }
 
+                impl<const N: usize> AsChunk for [$ty; N] {
+                    #[inline]
+                    fn as_chunk (&self) -> JsValue {
+                        <[$ty]>::as_chunk(self)
+                    }
+                }
+
                 impl AsChunk for Vec<$ty> {
                     #[inline]
                     fn as_chunk (&self) -> JsValue {
@@ -215,7 +268,7 @@ macro_rules! impl_chunk {
                 impl AsChunk for Clamped<&[$cty]> {
                     #[inline]
                     fn as_chunk (&self) -> JsValue {
-                        let chunk = <$name>::from(self);
+                        let chunk = <$name>::from(self.0);
                         return chunk.into()
                     }
                 }
@@ -223,7 +276,7 @@ macro_rules! impl_chunk {
                 impl AsChunk for Clamped<Vec<$cty>> {
                     #[inline]
                     fn as_chunk (&self) -> JsValue {
-                        let chunk = <$name>::from(self);
+                        let chunk = <$name>::from(&self.0 as &[$cty]);
                         return chunk.into()
                     }
                 }

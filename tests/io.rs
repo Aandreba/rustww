@@ -35,21 +35,29 @@ async fn ip_text () -> Result<()> {
 #[wasm_bindgen_test]
 async fn custom_read () -> Result<()> {
     use std::time::Duration;
-    use futures::TryStreamExt;
+    use futures::{StreamExt, TryStreamExt};
 
     use rand::random;
     use rustww::{time::spawn_interval, log_js};
     use wasm_bindgen::JsValue;
 
+    let mut interval = std::cell::Cell::new(None);
     let mut reader = JsReadStream::custom()
         .start(|con| {
-            let _ = spawn_interval(Duration::from_millis(500), move || {
-                let chunk = random::<f64>();
-                con.enqueue_with_chunk(&JsValue::from_f64(chunk)).unwrap();
+            let int = Interval::new(Duration::from_millis(500), move || {
+                let byte = random::<u8>();
+                con.enqueue(&[byte]).unwrap();
             })?;
+
+            interval.set(Some(int));
             Ok(())
         })
-        .build()?;
+        .cancel(|_| {
+            let _ = interval.take();
+            Ok(())
+        })
+        .build()?
+        .take(5);
 
     while let Some(next) = reader.try_next().await? {
         log_js!(next)

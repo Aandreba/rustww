@@ -1,10 +1,9 @@
-use std::{task::{Poll, Waker}, cell::Cell};
+use std::{task::{Poll, Waker}, cell::Cell, marker::PhantomData};
 use docfg::docfg;
 use futures::{Future, TryFutureExt, FutureExt, Stream, TryStreamExt};
 use js_sys::{Uint8Array, JsString};
 use wasm_bindgen::{JsCast, JsValue, prelude::{wasm_bindgen}};
 use wasm_bindgen_futures::JsFuture;
-use web_sys::ReadableStream;
 use crate::{Result, utils::{as_typed_array}};
 use super::IntoFetchBody;
 
@@ -19,21 +18,22 @@ extern "C" {
 }
 
 /// A rustfull wrapper arround a JavaScript [`ReadableStream`](web_sys::ReadableStream)
-pub struct JsReadStream {
+pub struct JsReadStream<'a> {
     #[allow(unused)]
     stream: web_sys::ReadableStream,
     reader: Option<web_sys::ReadableStreamDefaultReader>,
     #[cfg(web_sys_unstable_apis)]
-    pub(super) _builder: Option<super::builder::ReadBuilder>,
+    pub(super) _builder: Option<super::builder::ReadBuilder<'a>>,
     current: Option<NextChunk>,
-    done: bool
+    done: bool,
+    _phtm: PhantomData<&'a mut &'a ()>
 }
 
-impl JsReadStream {
+impl<'a> JsReadStream<'a> {
     /// Returns a builder for a custom [`JsReadStream`]
     #[docfg(web_sys_unstable_apis)]
     #[inline]
-    pub fn custom () -> super::builder::ReadBuilder {
+    pub fn custom () -> super::builder::ReadBuilder<'a> {
         return super::builder::ReadBuilder::new()
     }
 
@@ -41,7 +41,7 @@ impl JsReadStream {
     #[inline]
     pub fn new<T: Into<web_sys::ReadableStream>> (stream: T) -> Result<Self> {
         let stream = <T as Into<web_sys::ReadableStream>>::into(stream);
-        return Ok(Self { stream, reader: None, #[cfg(web_sys_unstable_apis)] _builder: None, current: None, done: false })
+        return Ok(Self { stream, reader: None, #[cfg(web_sys_unstable_apis)] _builder: None, current: None, done: false, _phtm: PhantomData })
     }
     
     /// Creates a new [`JsReadStream`] from a teed [`ReadableStream`], assigning one of
@@ -57,9 +57,9 @@ impl JsReadStream {
         debug_assert!(this.is_instance_of::<web_sys::ReadableStream>());
         let this = this.unchecked_into::<web_sys::ReadableStream>();
 
-        return Ok(Self { stream: this, reader: None, #[cfg(web_sys_unstable_apis)] _builder: None, current: None, done: false })
+        return Ok(Self { stream: this, reader: None, #[cfg(web_sys_unstable_apis)] _builder: None, current: None, done: false, _phtm: PhantomData })
     }
-    
+
     /// Reads the remaining bytes in the stream into a `Vec<u8>`
     pub async fn read_remaining (&mut self) -> Result<Vec<u8>> {
         let mut result = Vec::<u8>::new();
@@ -77,32 +77,12 @@ impl JsReadStream {
         return Ok(result)
     }
 
-    /// Attempts to clone the [`JsReadStream`].
-    pub async fn try_clone (&mut self) -> Result<Self> {
-        // Wait for current chunk to finish
-        while let Some(ref mut current) = self.current {
-            let _ = JsFuture::from(current.promise.clone()).await?;
-        }
-
-        // Release read lock
-        if let Some(ref reader) = self.reader {
-            reader.release_lock();
-            self.reader = None;
-        }
-
-        // Tee stream
-        let array = self.stream.tee();
-        self.stream = array.get(0).unchecked_into();
-        let clone = array.get(1).unchecked_into::<ReadableStream>();
-        return Self::new(clone)
-    }
-
     /// Returns a [`Future`] that resolves when the next chunk of the stream is available
     #[inline]
     fn next_chunk (&mut self) -> NextChunk {
         let promise = self.get_reader().read();
         let future = JsFuture::from(promise.clone());
-        return NextChunk { promise, future, waker: Cell::new(None) }
+        return NextChunk { future, waker: Cell::new(None) }
     }
 
     fn get_reader (&mut self) -> &web_sys::ReadableStreamDefaultReader {
@@ -117,7 +97,7 @@ impl JsReadStream {
     }
 }
 
-impl Stream for JsReadStream {
+impl Stream for JsReadStream<'_> {
     type Item = Result<Uint8Array>;
 
     fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
@@ -140,14 +120,14 @@ impl Stream for JsReadStream {
     }
 }
 
-impl IntoFetchBody for JsReadStream {
+impl IntoFetchBody for JsReadStream<'static> {
     #[inline]
     fn into_body (self) -> Option<JsValue> {
         return Some(self.stream.clone().into())
     }
 }
 
-impl Drop for JsReadStream {
+impl Drop for JsReadStream<'_> {
     #[inline]
     fn drop(&mut self) {
         if let Some(ref reader) = self.reader {
@@ -225,7 +205,6 @@ impl Drop for JsReadByteStream {
 
 /// Future for [`next_chunk`](JsReadStream::next_chunk)
 struct NextChunk {
-    promise: js_sys::Promise,
     future: JsFuture,
     waker: Cell<Option<Waker>>
 }
