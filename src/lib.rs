@@ -1,6 +1,20 @@
 #![feature(new_uninit, min_specialization, ptr_metadata, get_mut_unchecked, is_some_and, let_chains, unboxed_closures, iter_intersperse, io_error_other, type_alias_impl_trait, const_fn_floating_point_arithmetic, concat_idents, const_trait_impl, core_intrinsics)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[doc(hidden)]
+extern "C" {
+    #[wasm_bindgen()]
+    fn log ()
+}
+
+/// Logs the inserted values by serializing them into [`JsValue`](wasm_bindgen::JsValue)
+#[macro_export]
+macro_rules! println {
+    ($($v:expr),+) => {{
+        
+    }};
+}
+
 /// Logs the inserted values by serializing them into [`JsValue`](wasm_bindgen::JsValue)
 #[macro_export]
 macro_rules! log {
