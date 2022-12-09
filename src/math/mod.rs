@@ -1,4 +1,5 @@
 use core::ops::*;
+use rand::{distributions::*, prelude::*};
 
 macro_rules! impl_scalar_vec {
     (
@@ -159,16 +160,27 @@ macro_rules! impl_scalar_vec {
                     }
                 }
             }
+
+            impl Distribution<$name> for Standard {
+                #[inline]
+                fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> $name {
+                    return $name {
+                        $(
+                            $vname: <Self as Distribution<$ty>>::sample(self, rng)
+                        ),+
+                    }
+                }
+            }
         )+
     };
 }
 
 flat_mod! { generic }
 
-#[cfg(target_feature = "simd128")]
+#[cfg(feature = "simd")]
 flat_mod! { full, padded, extended }
 
-#[cfg(not(target_feature = "simd128"))]
+#[cfg(not(feature = "simd"))]
 impl_scalar_vec! {
     pub struct Vec2f: (x, y) => [f32; 2],
     pub struct Vec3f: (x, y, z) => [f32; 3],

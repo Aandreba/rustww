@@ -7,6 +7,7 @@ edition = "2021"
 [features]
 default = ["es_modules"]
 es_modules = ["wasm_thread/es_modules"]
+simd = ["packed_simd_2", "rand/simd_support"]
 
 [dependencies]
 async-channel = "1.7.1"
@@ -19,6 +20,7 @@ futures = "0.3.25"
 getrandom = { version = "0.2.8", features = ["js"] }
 into_string = "2.0.0"
 js-sys = "0.3.60"
+packed_simd_2 = { version = "0.3.8", optional = true }
 rand = "0.8.5"
 serde = { version = "1.0.147", features = ["derive"] }
 serde-wasm-bindgen = "0.4.5"
@@ -32,8 +34,6 @@ web-sys = { version = "0.3.60", features = ["Blob", "Url", "Worker", "WorkerOpti
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs", "--cfg", "web_sys_unstable_apis"]
-
-#[target.'cfg(all(target_family = "wasm", target_feature = "simd128"))'.package.metadata]
 
 [workspace]
 members = ["server_tests", "server"]

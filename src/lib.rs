@@ -1,6 +1,9 @@
 #![feature(new_uninit, min_specialization, ptr_metadata, get_mut_unchecked, is_some_and, let_chains, unboxed_closures, iter_intersperse, io_error_other, type_alias_impl_trait, const_fn_floating_point_arithmetic, concat_idents, const_trait_impl, core_intrinsics)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+#[cfg(all(feature = "simd", not(all(target_family = "wasm", target_feature = "simd128"))))]
+compile_error!("`simd` feature enabled without target feature `simd128`");
+
 #[doc(hidden)]
 #[wasm_bindgen]
 extern "C" {

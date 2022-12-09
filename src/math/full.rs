@@ -1,4 +1,5 @@
 use core::ops::*;
+use rand::{distributions::*, prelude::*};
 
 #[cfg(target_arch = "wasm32")]
 use core::arch::wasm32::*;
@@ -138,6 +139,17 @@ impl Div<Vec4f> for f32 {
     #[inline]
     fn div(self, rhs: Vec4f) -> Self::Output {
         return Vec4f { inner: f32x4_div(f32x4_splat(self), rhs.inner) }
+    }
+}
+
+impl Distribution<Vec4f> for Standard {
+    #[inline]
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Vec4f {
+        return Vec4f {
+            inner: unsafe {
+                core::mem::transmute(<Self as Distribution<packed_simd_2::Simd::<[f32; 4]>>>::sample(self, rng))
+            }
+        }
     }
 }
 
@@ -291,6 +303,17 @@ impl Div<Vec2d> for f64 {
     }
 }
 
+impl Distribution<Vec2d> for Standard {
+    #[inline]
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Vec2d {
+        return Vec2d {
+            inner: unsafe {
+                core::mem::transmute(<Self as Distribution<packed_simd_2::Simd::<[f64; 2]>>>::sample(self, rng))
+            }
+        }
+    }
+}
+
 impl PartialEq for Vec2d {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -323,10 +346,8 @@ impl Debug for Vec2d {
 fn f32x4_sum (v: v128) -> f32 {
     // v = [ D C | B A ]
     let mut shuf = i32x4_shuffle::<1, 0, 3, 2>(v, v); // [ C D | A B ]
-    let mut sums = f32x4_add(v, shuf); // sums = [ D+C C+D | B+A A+B ]
-    shuf = i32x4_shuffle::<0, 1, 4, 5>(shuf, sums); //  [ C D | D+C C+D ]
-    sums = f32x4_add(sums, shuf);
-    return f32x4_extract_lane::<3>(sums);
+    let sums = f32x4_add(v, shuf); // sums = [ D+C C+D | B+A A+B ]
+    return f32x4_extract_lane::<0>(sums) + f32x4_extract_lane::<2>(sums);
 }
 
 #[cfg(target_feature = "simd128")]

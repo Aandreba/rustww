@@ -1,5 +1,6 @@
 use core::ops::*;
 use super::full::*;
+use rand::{distributions::*, prelude::*};
 
 macro_rules! impl_extended {
     (
@@ -154,6 +155,16 @@ macro_rules! impl_extended {
                     return $name {
                         field1: self / rhs.field1,
                         field2: self / rhs.field2
+                    }
+                }
+            }
+
+            impl Distribution<$name> for Standard {
+                #[inline]
+                fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> $name {
+                    return $name {
+                        field1: self.sample(rng),
+                        field2: self.sample(rng)
                     }
                 }
             }

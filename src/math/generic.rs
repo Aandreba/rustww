@@ -2,7 +2,6 @@ use super::*;
 use serde::*;
 use serde::de::Visitor;
 use serde::ser::SerializeSeq;
-use rand::{distributions::*, prelude::*};
 
 macro_rules! impl_generic {
     ($($name:ident as [$ty:ty; $len:literal] => ($($var:ident),+)),+) => {
@@ -11,17 +10,6 @@ macro_rules! impl_generic {
                 #[inline]
                 fn from ([$($var),+]: [$ty; $len]) -> Self {
                     return Self::new($($var),+)
-                }
-            }
-
-            impl Distribution<$name> for Standard {
-                #[inline]
-                fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> $name {
-                    <$name>::new(
-                        $(
-                            <Self as Distribution<$ty>>::sample(self, rng)
-                        ),+
-                    )
                 }
             }
 

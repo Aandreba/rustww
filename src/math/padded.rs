@@ -1,6 +1,13 @@
-use core::arch::wasm32::*;
+use rand::{distributions::*, prelude::*};
 use super::full::*;
 use core::ops::*;
+
+#[cfg(target_arch = "wasm32")]
+use core::arch::wasm32::*;
+#[cfg(target_arch = "wasm64")]
+use core::arch::wasm64::*;
+#[cfg(target_arch = "wasm")]
+use core::arch::wasm::*;
 
 macro_rules! impl_padded {
     (
@@ -17,10 +24,6 @@ macro_rules! impl_padded {
             }
 
             impl $name {
-                const DIV_MASK: v128 = unsafe {
-                    Self::const_splat(core::mem::transmute(!0)).inner.inner
-                };
-
                 #[doc = concat!("Creates a new [`", stringify!($name), "`]")]
                 #[inline]
                 pub const fn new ($($field: $ty),+) -> Self {
@@ -119,12 +122,18 @@ macro_rules! impl_padded {
 
                 #[inline]
                 fn div (self, rhs: $name) -> Self::Output {
-                    let div = (self / rhs.inner).inner;
-                    return $name {
-                        inner: $parent {
-                            inner: v128_and(div, <$name>::DIV_MASK)
-                        }
-                    }
+                    let mut inner: $parent = self / rhs.inner;
+                    inner.inner = v128_and(inner.inner, <$name>::DIV_MASK);
+                    return $name { inner }
+                }
+            }
+
+            impl Distribution<$name> for Standard {
+                #[inline]
+                fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> $name {
+                    let mut inner: $parent = <Self as Distribution<$parent>>::sample(self, rng);
+                    inner.inner = v128_and(inner.inner, <$name>::DIV_MASK);
+                    return $name { inner }
                 }
             }
 
@@ -134,7 +143,6 @@ macro_rules! impl_padded {
                         $(
                             .field(stringify!($field), &self.$field())
                         )+
-
                         .finish()
                 }
             }
@@ -148,27 +156,25 @@ impl_padded! {
 }
 
 impl Vec2f {
+    const DIV_MASK: v128 = unsafe {
+        core::mem::transmute(((1u128 << (2 * u32::BITS)) - 1))
+    };
+
     #[doc = concat!("Creates a new [`Vec2f`] by expanding `v` into every lane")]
     #[inline]
     pub fn splat (v: f32) -> Self {
         return Self::new(v, v);
     }
-
-    #[inline]
-    const fn const_splat (v: f32) -> Self {
-        return Self::new(v, v);
-    }
 }
 
 impl Vec3f {
+    const DIV_MASK: v128 = unsafe {
+        core::mem::transmute(((1u128 << (3 * u32::BITS)) - 1))
+    };
+
     #[doc = concat!("Creates a new [`Vec3f`] by expanding `v` into every lane")]
     #[inline]
     pub fn splat (v: f32) -> Self {
-        return Self::new(v, v, v);
-    }
-
-    #[inline]
-    const fn const_splat (v: f32) -> Self {
         return Self::new(v, v, v);
     }
 }
