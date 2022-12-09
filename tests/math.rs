@@ -1,5 +1,9 @@
 #![feature(concat_idents)]
 
+macro_rules! as_pattern {
+    ($pat:pat) => { $pat }
+}
+
 use rand::random;
 use rustww::prelude::*;
 use wasm_bindgen_test::{wasm_bindgen_test};
@@ -11,7 +15,9 @@ macro_rules! impl_tests {
         $(
             #[wasm_bindgen_test]
             fn addition () {
-                let [$(concat_idents!($var, _1)),+] = random::<[$ty; $len]>();
+                let [$($var),+] = random::<[$ty; $len]>();
+                let alpha = <$name>::new();
+                
                 let [$(concat_idents!($var, _2)),+] = random::<[$ty; $len]>();
                 
                 let result = <$name>::new($(concat_idents!($var, _1)),+) + $name::new($( concat_idents!($var, _2) ),+);

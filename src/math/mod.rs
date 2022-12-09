@@ -163,6 +163,8 @@ macro_rules! impl_scalar_vec {
     };
 }
 
+flat_mod! { generic }
+
 #[cfg(target_feature = "simd128")]
 flat_mod! { full, padded, extended }
 
