@@ -4,11 +4,11 @@
 #[cfg(all(feature = "simd", not(all(target_family = "wasm", target_feature = "simd128"))))]
 compile_error!("`simd` feature enabled without target feature `simd128`");
 
-#[doc(hidden)]
 #[wasm_bindgen]
 extern "C" {
+    #[doc(hidden)]
     #[wasm_bindgen(js_namespace = console, js_name = log)]
-    fn _log (s: &str);
+    pub fn _log (s: &str);
 }
 
 #[doc(hidden)]
@@ -151,6 +151,7 @@ pub mod prelude {
     pub use crate::time::{Interval, Timeout, sleep};
 }
 
+/// Getter for the `Window` object
 #[inline]
 pub fn window () -> Result<Window> {
     return ::web_sys::window().ok_or_else(|| wasm_bindgen::JsValue::from_str("window not found"));

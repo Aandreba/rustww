@@ -1,11 +1,11 @@
 use std::{task::{Poll, Waker}, cell::Cell};
 use docfg::docfg;
 use futures::{Future, TryFutureExt, FutureExt, Stream, TryStreamExt};
-use js_sys::{Uint8Array};
+use js_sys::{Uint8Array, JsString};
 use wasm_bindgen::{JsCast, JsValue, prelude::{wasm_bindgen}};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::ReadableStream;
-use crate::Result;
+use crate::{Result, utils::{as_typed_array}};
 use super::IntoFetchBody;
 
 #[wasm_bindgen]
@@ -128,7 +128,12 @@ impl Stream for JsReadStream {
         if let Poll::Ready(ChunkResult { done, value }) = chunk.poll_unpin(cx)? {
             self.done = done || value.is_none();
             self.current = None;
-            return unsafe { Poll::Ready(Some(Ok(value.unwrap_unchecked()))) };
+
+            if let Some(value) = value {
+                return Poll::Ready(Some(Ok(value)));
+            } else if done {
+                return Poll::Ready(None)
+            }
         }
 
         return Poll::Pending
@@ -251,8 +256,8 @@ impl TryFrom<&JsValue> for ChunkResult {
 
         let value = js_sys::Reflect::get(result, &JsValue::from_str("value"))?;
         if value.is_null() || value.is_undefined() { return Ok(Self { done, value: None }) }
-        debug_assert!(value.is_instance_of::<Uint8Array>());
-        return Ok(Self { done, value: Some(value.unchecked_into()) })
+        let value = chunk_into_bytes(value)?;
+        return Ok(Self { done, value: Some(value) })
     }
 }
 
@@ -270,4 +275,30 @@ impl TryFrom<JsValue> for ChunkResult {
 struct ChunkResult {
     pub done: bool,
     pub value: Option<Uint8Array>
+}
+
+fn chunk_into_bytes (chunk: JsValue) -> Result<Uint8Array> {
+    if let Some(array) = as_typed_array(&chunk) {
+        return Ok(Uint8Array::new_with_byte_offset_and_length(
+            &array.buffer(),
+            array.byte_offset(),
+            array.byte_length()
+        ));
+    }
+
+    if chunk.is_instance_of::<JsString>() {
+        #[wasm_bindgen]
+        extern "C" {
+            #[wasm_bindgen(js_name = TextEncoder, extends = web_sys::TextEncoder)]
+            type TextEncoderExt;
+
+            #[wasm_bindgen(method, catch)]
+            fn encode (this: &TextEncoderExt, s: &js_sys::JsString) -> Result<Uint8Array>;
+        }
+
+        let encoder = web_sys::TextEncoder::new()?.unchecked_into::<TextEncoderExt>();
+        return encoder.encode(chunk.unchecked_ref());
+    }
+
+    return Err(JsValue::from_str(&format!("Unknown chunk type")))
 }

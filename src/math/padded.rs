@@ -157,7 +157,7 @@ impl_padded! {
 
 impl Vec2f {
     const DIV_MASK: v128 = unsafe {
-        core::mem::transmute(((1u128 << (2 * u32::BITS)) - 1))
+        core::mem::transmute((1u128 << (2 * u32::BITS)) - 1)
     };
 
     #[doc = concat!("Creates a new [`Vec2f`] by expanding `v` into every lane")]
@@ -169,7 +169,7 @@ impl Vec2f {
 
 impl Vec3f {
     const DIV_MASK: v128 = unsafe {
-        core::mem::transmute(((1u128 << (3 * u32::BITS)) - 1))
+        core::mem::transmute((1u128 << (3 * u32::BITS)) - 1)
     };
 
     #[doc = concat!("Creates a new [`Vec3f`] by expanding `v` into every lane")]

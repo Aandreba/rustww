@@ -3,13 +3,16 @@
 
 use std::{cell::{UnsafeCell, Cell}, mem::{MaybeUninit}, rc::{Rc, Weak}, task::{Waker, Poll, Context}, future::Future, ops::{Deref, DerefMut}, collections::VecDeque, fmt::{Debug, Display}, pin::Pin, io::ErrorKind};
 use futures::{Stream, AsyncRead};
+use js_sys::*;
 use serde::Deserialize;
 use utils_atomics::{flag::{AsyncFlag, AsyncSubscribe}, TakeCell};
-use wasm_bindgen::__rt::WasmRefCell;
+use wasm_bindgen::{__rt::WasmRefCell, prelude::*, JsStatic};
 
 const UNINIT: u8 = 0;
 const WORKING: u8 = 1;
 const INIT: u8 = 2;
+
+mod sealed { pub trait Sealed {} }
 
 struct ChannelInner<T> {
     buffer: VecDeque<T>,
@@ -167,4 +170,69 @@ impl<T> Default for FutureInner<T> {
             waker: Default::default()
         }
     }
+}
+
+/// Represents a JavaScript typed array
+pub trait TypedArray: sealed::Sealed {
+    fn buffer (&self) -> ArrayBuffer;
+    fn byte_length (&self) -> u32;
+    fn byte_offset (&self) -> u32;
+    fn length (&self) -> u32;
+}
+
+macro_rules! impl_typed_array {
+    ($($name:ident as [$t:ty]),+) => {
+        $(
+            impl TypedArray for $name {
+                #[inline]
+                fn buffer (&self) -> ArrayBuffer {
+                    <$name>::buffer(self)
+                }
+
+                #[inline]
+                fn byte_length (&self) -> u32 {
+                    <$name>::byte_length(self)
+                }
+
+                #[inline]
+                fn byte_offset (&self) -> u32 {
+                    <$name>::byte_offset(self)
+                }
+
+                #[inline]
+                fn length (&self) -> u32 {
+                    <$name>::length(self)
+                }
+            }
+
+            impl sealed::Sealed for $name {}
+        )+
+
+        #[inline]
+        pub(crate) fn as_typed_array (this: &JsValue) -> Option<&dyn TypedArray> {
+            use wasm_bindgen::JsCast;
+            $(
+                if this.is_instance_of::<$name>() {
+                    return Some(this.unchecked_ref::<$name>());
+                }
+            )+
+            return None;
+        }
+    };
+}
+
+impl_typed_array! {
+    Uint8Array as [u8],
+    Uint8ClampedArray as [u8],
+    Uint16Array as [u16],
+    Uint32Array as [u32],
+    BigUint64Array as [u64],
+
+    Int8Array as [i8],
+    Int16Array as [i16],
+    Int32Array as [i32],
+    BigInt64Array as [i64],
+
+    Float32Array as [f32],
+    Float64Array as [f64]
 }

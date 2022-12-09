@@ -6,7 +6,6 @@ doc:
 
 test:
 	RUSTFLAGS='--cfg web_sys_unstable_apis -C target-feature=+simd128,-atomics,-bulk-memory,-mutable-globals' wasm-pack test --$(BROWSER) --headless --features simd -Z build-std=std,panic_abort
-	RUSTFLAGS='--cfg web_sys_unstable_apis -C target-feature=-simd128,-atomics,-bulk-memory,-mutable-globals' wasm-pack test --$(BROWSER) --headless -Z build-std=std,panic_abort
 
 test_server:
 	RUSTFLAGS='--cfg web_sys_unstable_apis -C target-feature=-simd128,+atomics,+bulk-memory,+mutable-globals' wasm-pack build --target web --out-dir ../server/pkg server_tests -Z build-std=std,panic_abort
