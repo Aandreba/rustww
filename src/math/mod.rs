@@ -87,7 +87,7 @@ macro_rules! impl_scalar_vec {
                 fn sub (self, rhs: Self) -> Self::Output {
                     return Self {
                         $(
-                            $vname: self.$vname + rhs.$vname
+                            $vname: self.$vname - rhs.$vname
                         ),+
                     }
                 }
