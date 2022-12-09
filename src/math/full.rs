@@ -321,11 +321,12 @@ impl Debug for Vec2d {
 #[cfg(target_feature = "simd128")]
 #[inline]
 fn f32x4_sum (v: v128) -> f32 {
-    let mut shuf = i32x4_shuffle::<1, 0, 3, 2>(v, v);
-    let mut sums = f32x4_add(v, shuf);
-    shuf = i32x4_shuffle::<0, 1, 4, 5>(shuf, sums);
+    // v = [ D C | B A ]
+    let mut shuf = i32x4_shuffle::<1, 0, 3, 2>(v, v); // [ C D | A B ]
+    let mut sums = f32x4_add(v, shuf); // sums = [ D+C C+D | B+A A+B ]
+    shuf = i32x4_shuffle::<0, 1, 4, 5>(shuf, sums); //  [ C D | D+C C+D ]
     sums = f32x4_add(sums, shuf);
-    return f32x4_extract_lane::<0>(sums);
+    return f32x4_extract_lane::<3>(sums);
 }
 
 #[cfg(target_feature = "simd128")]

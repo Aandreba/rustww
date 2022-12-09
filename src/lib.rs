@@ -2,16 +2,32 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[doc(hidden)]
+#[wasm_bindgen]
 extern "C" {
-    #[wasm_bindgen()]
-    fn log ()
+    #[wasm_bindgen(js_namespace = console, js_name = log)]
+    fn _log (s: &str);
 }
 
-/// Logs the inserted values by serializing them into [`JsValue`](wasm_bindgen::JsValue)
+#[doc(hidden)]
+pub trait ArgsExt: Sized {
+    fn into_str (self) -> Cow<'static, str>;
+}
+
+impl ArgsExt for std::fmt::Arguments<'_> {
+    #[inline]
+    fn into_str (self) -> Cow<'static, str> {
+        return match self.as_str() {
+            Some(x) => Cow::Borrowed(x),
+            None => Cow::Owned(std::fmt::format(self))
+        }
+    }
+}
+
+/// Prints the formated arguments into the JavaScript console
 #[macro_export]
 macro_rules! println {
-    ($($v:expr),+) => {{
-        
+    ($($t:tt)*) => {{
+        $crate::_log(&$crate::ArgsExt::into_str(::std::format_args!($($t)*)));
     }};
 }
 
@@ -76,6 +92,9 @@ pub extern crate js_sys;
 #[doc(hidden)]
 pub extern crate serde_wasm_bindgen;
 
+use std::borrow::Cow;
+
+use wasm_bindgen::prelude::wasm_bindgen;
 /// Web Worker threads (from the [`wasm_thread`](https://github.com/chemicstry/wasm_thread) crate).
 #[docfg::docfg(target_feature = "atomics")]
 pub use wasm_thread as thread;
@@ -114,7 +133,22 @@ pub mod storage;
 /// Various utils
 pub mod utils;
 
+/// Prelude
+pub mod prelude {
+    pub use crate::{Result, window, log, println};
+    pub use crate::io::{JsReadStream, JsWriteStream};
+    pub use crate::math::*;
+    pub use crate::battery::{Battery, Snapshot, BatteryTime};
+    pub use crate::fs::{File};
+    pub use crate::geo::{Geolocation};
+    pub use crate::notify::Notification;
+    pub use crate::orient::{Orientation, Motion, EulerAngles};
+    pub use crate::storage::{Storage};
+    pub use crate::task::spawn_local;
+    pub use crate::time::{Interval, Timeout, sleep};
+}
+
 #[inline]
-pub(crate) fn window () -> Result<Window> {
+pub fn window () -> Result<Window> {
     return ::web_sys::window().ok_or_else(|| wasm_bindgen::JsValue::from_str("window not found"));
 }

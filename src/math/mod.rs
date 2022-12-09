@@ -98,7 +98,7 @@ macro_rules! impl_scalar_vec {
 
                 #[inline]
                 fn mul (self, rhs: Self) -> Self::Output {
-                    let mut result = 0.;
+                    let mut result = 0.0;
 
                     $(
                         result = <$ty>::mul_add(self.$vname, rhs.$vname, result);
