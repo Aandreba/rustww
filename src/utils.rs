@@ -1,7 +1,7 @@
 #![allow(unused)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-use std::{cell::{UnsafeCell, Cell}, mem::{MaybeUninit}, rc::{Rc, Weak}, task::{Waker, Poll, Context}, future::Future, ops::{Deref, DerefMut}, collections::VecDeque, fmt::{Debug, Display}, pin::Pin, io::ErrorKind, marker::{PhantomPinned, PhantomData}};
+use std::{cell::{UnsafeCell, Cell}, mem::{MaybeUninit}, rc::{Rc, Weak}, task::{Waker, Poll, Context}, future::Future, ops::{Deref, DerefMut}, collections::VecDeque, fmt::{Debug, Display}, pin::Pin, io::ErrorKind, marker::{PhantomPinned, PhantomData}, any::{Any, TypeId}};
 use futures::{Stream, AsyncRead};
 use js_sys::*;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -198,14 +198,15 @@ pub fn abort<T> () -> Result<(AbortController<T>, AbortSignal<T>)> {
     return Ok((con, sig))
 }
 
-/// The AbortController interface represents a controller object that allows you to abort one or more Web requests as and when desired.
+/// Represents a controller object that allows you to abort one or more Web requests as and when desired.
 #[derive(Debug, Clone)]
-pub struct AbortController<T: ?Sized> {
+pub struct AbortController<T> {
     inner: AbortControllerExt,
     _phtm: PhantomData<T>
 }
 
 impl<T> AbortController<T> {
+    /// Creates a new [`AbortController`]
     #[inline]
     pub fn new () -> Result<Self> {
         return Ok(Self {
@@ -214,6 +215,7 @@ impl<T> AbortController<T> {
         })
     }
 
+    /// Sends the abortion signal with the specified reason
     #[inline]
     pub fn abort (&self, reason: &T) -> Result<()> where T: Serialize {
         let reason = serde_wasm_bindgen::to_value(reason)?;
@@ -221,12 +223,19 @@ impl<T> AbortController<T> {
         Ok(())
     }
 
+    /// Sends the abortion signal, casting the specified reason as a [`JsValue`]
     #[inline]
     pub fn abort_cast (&self, reason: &T) where T: AsRef<JsValue> {
         self.inner.abort(reason.as_ref())
     }
 
+    /// Returns a raw [`web_sys::AbortSignal`] for the controller.
+    #[inline]
+    pub fn raw_signal (&self) -> web_sys::AbortSignal {
+        return self.inner.signal()
+    }
 
+    /// Returns an [`AbortSignal`] for the controller.
     #[inline]
     pub fn signal (&self) -> Result<AbortSignal<T>> {
         return AbortSignal::new(self.inner.signal())
@@ -243,7 +252,7 @@ impl<T> From<web_sys::AbortController> for AbortController<T> {
     }
 }
 
-/// The AbortSignal interface represents a signal object that allows you to communicate with a DOM request (such as a fetch request) and abort it if required via an AbortController object.
+/// Represents a signal object that allows you to communicate with a DOM request (such as a fetch request) and abort it if required via an [`AbortController`].
 pub struct AbortSignal<T> {
     inner: AbortSignalExt,
     _list: Closure<dyn FnMut()>, 
@@ -265,7 +274,7 @@ impl<T> AbortSignal<T> {
             >(Box::new(f))
         };
 
-        let _list = Closure::wrap(f.into_mut_fn());
+        let _list = Closure::wrap(f.into_fn_mut());
         
         let fun = _list.as_ref();
         debug_assert!(fun.is_instance_of::<js_sys::Function>());
@@ -279,6 +288,7 @@ impl<T> AbortSignal<T> {
         })
     }
 
+    /// Returns `true` if the signal is aborted, `false` otherwise
     #[inline]
     pub fn is_aborted (&self) -> bool {
         return self.inner.aborted()
@@ -304,7 +314,6 @@ impl<T> AbortSignal<T> {
         return JsCast::dyn_into::<T>(reason).map(Some)
     }
 
-
     #[inline]
     pub fn try_clone (&self) -> Result<Self> {
         return Self::new(self.inner.clone().unchecked_into())
@@ -328,7 +337,7 @@ impl<T: DeserializeOwned> Future for AbortSignal<T> {
             return Poll::Ready(Ok(v))
         }
 
-        self.waker.set(Some(cx.waker().clone()));
+        Cell::set(&self.waker, Some(cx.waker().clone()));
         return Poll::Pending
     }
 }
@@ -359,11 +368,34 @@ impl<T> Drop for AbortSignal<T> {
 }
 
 /// Represents a JavaScript typed array
-pub trait TypedArray: sealed::Sealed {
+pub trait TypedArray: sealed::Sealed + AsRef<JsValue> {
     fn buffer (&self) -> ArrayBuffer;
     fn byte_length (&self) -> u32;
     fn byte_offset (&self) -> u32;
     fn length (&self) -> u32;
+
+    #[inline]
+    fn as_bytes (&self) -> Uint8Array {
+        return Uint8Array::new_with_byte_offset_and_length(
+            &self.buffer(),
+            self.byte_offset(),
+            self.byte_length()
+        )
+    }
+}
+
+/// [`TypedArray`] trait extansion
+pub trait TypedArrayExt: TypedArray + JsCast {
+    type Element;
+
+    fn bytes_per_element () -> u32;
+    fn copy_to (&self, dst: &mut [Self::Element]);
+    fn copy_from (&self, src: &[Self::Element]);
+    fn to_vec (&self) -> Vec<Self::Element>;
+
+    unsafe fn view (v: &[Self::Element]) -> Self;
+    unsafe fn view_mut_raw (ptr: *mut Self::Element, length: usize) -> Self;
+    unsafe fn raw_copy_to_ptr (&self, ptr: *mut Self::Element);
 }
 
 macro_rules! impl_typed_array {
@@ -388,6 +420,58 @@ macro_rules! impl_typed_array {
                 #[inline]
                 fn length (&self) -> u32 {
                     <$name>::length(self)
+                }
+            }
+
+            impl TypedArrayExt for $name {
+                type Element = $t;
+
+                /// There is some kind of bug between thread locals and documentation 
+                #[cfg(docsrs)]
+                #[inline]
+                fn bytes_per_element () -> u32 {
+                    0
+                }
+                
+                #[cfg(not(docsrs))]
+                #[inline]
+                fn bytes_per_element () -> u32 {
+                    #[wasm_bindgen]
+                    extern {
+                        #[wasm_bindgen(js_namespace = $name)]
+                        static BYTES_PER_ELEMENT: u32;
+                    }
+                    *BYTES_PER_ELEMENT
+                }
+
+                #[inline]
+                fn copy_to (&self, dst: &mut [Self::Element]) {
+                    <$name>::copy_to(self, dst)
+                }
+                
+                #[inline]
+                fn copy_from (&self, src: &[Self::Element]) {
+                    <$name>::copy_from(self, src)
+                }
+
+                #[inline]
+                fn to_vec (&self) -> Vec<Self::Element> {
+                    <$name>::to_vec(self)
+                }
+
+                #[inline]
+                unsafe fn view (v: &[Self::Element]) -> Self {
+                    <$name>::view(v)
+                }
+
+                #[inline]
+                unsafe fn view_mut_raw (ptr: *mut Self::Element, length: usize) -> Self {
+                    <$name>::view_mut_raw(ptr, length)
+                }
+
+                #[inline]
+                unsafe fn raw_copy_to_ptr (&self, ptr: *mut Self::Element) {
+                    <$name>::raw_copy_to_ptr(self, ptr)
                 }
             }
 

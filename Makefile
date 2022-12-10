@@ -1,6 +1,9 @@
 SERVER_URL=http://localhost:8888
 BROWSER=firefox
 
+check:
+	RUSTFLAGS='--cfg web_sys_unstable_apis -C target-feature=+simd128,-atomics,-bulk-memory,-mutable-globals' cargo check --all-features --target wasm32-unknown-unknown -Z build-std=std,panic_abort
+
 doc:
 	cargo rustdoc --open --all-features --target wasm32-unknown-unknown -Z build-std=std,panic_abort -- --cfg docsrs --cfg web_sys_unstable_apis -C target-feature=+simd128,+atomics,+bulk-memory,+mutable-globals
 

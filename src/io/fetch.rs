@@ -4,7 +4,7 @@ use serde::{de::DeserializeOwned};
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen, JsCast};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{RequestInit, RequestCache, RequestCredentials, Headers, RequestMode, RequestRedirect, ReferrerPolicy};
-use crate::{Result, window};
+use crate::{Result, window, utils::AbortController};
 use super::{JsReadStream};
 
 macro_rules! impl_ident {
@@ -94,13 +94,14 @@ impl IntoFetchBody for Arc<str> {
 }
 
 /// A fetch request's method
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[wasm_bindgen]
 pub enum Method {
     #[default]
     Get = "GET",
     Post = "POST",
-    Head = "HEAD"
+    Head = "HEAD",
+    Put = "PUT"
 }
 
 /// A builder that allows to customize the parameters for an HTTP request
@@ -204,6 +205,21 @@ impl Request {
     #[inline]
     pub fn referrer_policy (&mut self, referrer_policy: ReferrerPolicy) -> &mut Self {
         self.inner.referrer_policy(referrer_policy);
+        self
+    }
+
+    /// Makes the request abortable, returning it's [`AbortController`]
+    #[inline]
+    pub fn abortable<T> (&mut self) -> Result<(AbortController<T>, &mut Self)> {
+        let con = AbortController::new()?;
+        let _ = self.abortable_with(&con);
+        return Ok((con, self))
+    }
+
+    /// Assigns `con` as the abort controller of the request
+    #[inline]
+    pub fn abortable_with<T> (&mut self, con: &AbortController<T>) -> &mut Self {
+        self.inner.signal(Some(&con.raw_signal()));
         self
     }
 

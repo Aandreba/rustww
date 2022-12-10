@@ -4,7 +4,7 @@ use futures::{Future, TryFutureExt, FutureExt, Stream, TryStreamExt};
 use js_sys::{Uint8Array};
 use wasm_bindgen::{JsCast, JsValue, prelude::{wasm_bindgen}};
 use wasm_bindgen_futures::JsFuture;
-use crate::{Result, utils::{TypedArray}};
+use crate::{Result, utils::{TypedArrayExt, TypedArray}};
 use super::IntoFetchBody;
 
 #[wasm_bindgen]
@@ -29,13 +29,33 @@ pub struct JsReadStream<'a, T> {
     _phtm: PhantomData<&'a T>
 }
 
-impl<T: TypedArray> JsReadStream<'_, T> {
+impl<T: TypedArrayExt> JsReadStream<'_, T> {
+    /// Reads the remaining entries in the stream flattened into a `Vec`
+    pub async fn read_remaining_values (&mut self) -> Result<Vec<T::Element>> {
+        let mut result = Vec::<T::Element>::new();
+
+        while let Some(chunk) = self.try_next().await? {
+            let len = chunk.length() as usize;
+            result.reserve(len);
+
+            unsafe {
+                chunk.raw_copy_to_ptr(result.as_mut_ptr().add(result.len()));
+                result.set_len(result.len() + len);
+            }
+        }
+
+        return Ok(result)
+    }
+}
+
+impl<T: TypedArray + JsCast> JsReadStream<'_, T> {
     /// Reads the remaining bytes in the stream into a `Vec<u8>`
     pub async fn read_remaining_bytes (&mut self) -> Result<Vec<u8>> {
         let mut result = Vec::<u8>::new();
 
         while let Some(chunk) = self.try_next().await? {
-            let len = chunk.length() as usize;
+            let chunk = chunk.as_bytes();
+            let len = chunk.byte_length() as usize;
             result.reserve(len);
 
             unsafe {
@@ -59,7 +79,7 @@ impl<'a, T: JsCast> JsReadStream<'a, T> {
     /// Creates a new [`JsReadStream`]
     #[inline]
     pub fn new<S: Into<web_sys::ReadableStream>> (stream: S) -> Result<Self> {
-        let stream = <T as Into<web_sys::ReadableStream>>::into(stream);
+        let stream = <S as Into<web_sys::ReadableStream>>::into(stream);
         return Ok(Self { stream, reader: None, #[cfg(web_sys_unstable_apis)] _builder: None, current: None, done: false, _phtm: PhantomData })
     }
     

@@ -14,7 +14,7 @@ use wasm_bindgen::JsCast;
 #[derive(Debug)]
 enum MaybePromise<'a, T> {
     Blocking (Closure<dyn FnMut<T, Output = Result<()>>>, PhantomData<&'a mut &'a dyn FnMut<T, Output = Result<()>>>),
-    Promise (Closure<dyn FnMut<T, Output = js_sys::Promise>>, PhantomData<&'a mut &'a dyn FnMut<T, Output = js_sys::Promise>>)
+    Promise (Closure<dyn FnMut<T, Output = js_sys::Promise>>, PhantomData<&'a mut (&'a (dyn 'a + Future<Output = Result<()>>), &'a dyn FnMut<T, Output = js_sys::Promise>)>)
 }
 
 impl<T> AsRef<JsValue> for MaybePromise<'_, T> {
@@ -27,7 +27,7 @@ impl<T> AsRef<JsValue> for MaybePromise<'_, T> {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ReadBuilder<'a, T> {
     start: Option<MaybePromise<'a, (ReadableStreamDefaultController,)>>,
     pull: Option<MaybePromise<'a, (ReadableStreamDefaultController,)>>,
@@ -35,7 +35,7 @@ pub struct ReadBuilder<'a, T> {
     _phtm: PhantomData<T>
 }
 
-impl<'a, T: ?Sized> ReadBuilder<'a, T> {
+impl<'a, T: JsCast> ReadBuilder<'a, T> {
     #[inline]
     pub fn new () -> Self {
         return Default::default()
@@ -172,7 +172,19 @@ impl<'a, T: ?Sized> ReadBuilder<'a, T> {
     }
 }
 
-#[derive(Debug, Default)]
+impl<T> Default for ReadBuilder<'_, T> {
+    #[inline]
+    fn default () -> Self {
+        return Self {
+            start: None,
+            pull: None,
+            cancel: None,
+            _phtm: PhantomData
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct WriteBuilder<'a, T> {
     start: Option<MaybePromise<'a, (WritableStreamDefaultController,)>>,
     write: Option<MaybePromise<'a, (JsValue, WritableStreamDefaultController)>>,
@@ -181,7 +193,7 @@ pub struct WriteBuilder<'a, T> {
     _phtm: PhantomData<T>
 }
 
-impl<'a, T> WriteBuilder<'a, T> {
+impl<'a, T: JsCast> WriteBuilder<'a, T> {
     #[inline]
     pub fn new () -> Self {
         return Default::default()
@@ -204,7 +216,7 @@ impl<'a, T> WriteBuilder<'a, T> {
 
     /// This is a method, called immediately when the object is constructed. The contents of this method are defined by the developer, and should aim to get access to the underlying sink.
     #[inline]
-    pub fn start_async<F: 'a + FnOnce(WriteStreamController) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
+    pub fn start_async<F: 'a + FnOnce(WriteStreamController) -> Fut, Fut: 'a + Future<Output = Result<()>>> (mut self, f: F) -> Self {
         let f = move |inner| {
             let fut = f(WriteStreamController { inner }).map_ok(|_| JsValue::UNDEFINED);
             return wasm_bindgen_futures::future_to_promise(fut)
@@ -223,7 +235,7 @@ impl<'a, T> WriteBuilder<'a, T> {
 
     /// This method, also defined by the developer, will be called when a new chunk of data (specified in the chunk parameter) is ready to be written to the underlying sink.
     #[inline]
-    pub fn write<F: 'a + FnMut(T, WriteStreamController) -> Result<()>> (mut self, f: F) -> Self where T: JsCast {
+    pub fn write<F: 'a + FnMut(T, WriteStreamController) -> Result<()>> (mut self, f: F) -> Self {
         let f = move |chunk, inner| {
             let chunk = JsCast::dyn_into::<T>(chunk)?;
             f(chunk, WriteStreamController { inner })
@@ -242,48 +254,13 @@ impl<'a, T> WriteBuilder<'a, T> {
 
     /// This method, also defined by the developer, will be called when a new chunk of data (specified in the chunk parameter) is ready to be written to the underlying sink.
     #[inline]
-    pub fn write_async<F: 'a + FnMut(T, WriteStreamController) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self where T: JsCast {
-        let f = move |inner| {
-            let chunk = JsCast::dyn_into::<T>(chunk)?;
-            let fut = f(chunk, WriteStreamController { inner }).map_ok(|_| JsValue::UNDEFINED);
-            return wasm_bindgen_futures::future_to_promise(fut)
-        };
+    pub fn write_async<F: 'a + FnMut(T, WriteStreamController) -> Fut, Fut: 'a + Future<Output = Result<()>>> (mut self, f: F) -> Self {
+        let f = move |chunk: JsValue, inner| {
+            let chunk = match JsCast::dyn_into::<T>(chunk) {
+                Ok(x) => x,
+                Err(e) => return js_sys::Promise::reject(&e),
+            };
 
-        let f = unsafe {
-            core::mem::transmute::<
-                Box<dyn 'a + FnMut(JsValue, WritableStreamDefaultController) -> js_sys::Promise>,
-                Box<dyn 'static + FnMut(JsValue, WritableStreamDefaultController) -> js_sys::Promise>,
-            >(Box::new(f))
-        };
-
-        self.write = Some(MaybePromise::Promise(Closure::wrap(f), PhantomData));
-        self
-    }
-
-    /// This method, also defined by the developer, will be called when a new chunk of data (specified in the chunk parameter) is ready to be written to the underlying sink.
-    #[inline]
-    pub fn write_deser<F: 'a + FnMut(T, WriteStreamController) -> Result<()>> (mut self, f: F) -> Self where T: DeserializeOwned {
-        let f = move |chunk, inner| {
-            let chunk = serde_wasm_bindgen::from_value::<T>(chunk)?;
-            f(chunk, WriteStreamController { inner })
-        };
-
-        let f = unsafe {
-            core::mem::transmute::<
-                Box<dyn 'a + FnMut(JsValue, WritableStreamDefaultController) -> Result<()>>,
-                Box<dyn 'static + FnMut(JsValue, WritableStreamDefaultController) -> Result<()>>,
-            >(Box::new(f))
-        };
-
-        self.write = Some(MaybePromise::Blocking(Closure::wrap(f), PhantomData));
-        self
-    }
-
-    /// This method, also defined by the developer, will be called when a new chunk of data (specified in the chunk parameter) is ready to be written to the underlying sink.
-    #[inline]
-    pub fn write_deser_async<F: 'a + FnMut(T, WriteStreamController) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self where T: DeserializeOwned {
-        let f = move |inner| {
-            let chunk = serde_wasm_bindgen::from_value::<T>(&chunk)?;
             let fut = f(chunk, WriteStreamController { inner }).map_ok(|_| JsValue::UNDEFINED);
             return wasm_bindgen_futures::future_to_promise(fut)
         };
@@ -316,7 +293,7 @@ impl<'a, T> WriteBuilder<'a, T> {
 
     /// This method, also defined by the developer, will be called if the app signals that it has finished writing chunks to the stream. The contents should do whatever is necessary to finalize writes to the underlying sink, and release access to it.
     #[inline]
-    pub fn close_async<F: 'a + FnOnce(WriteStreamController) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
+    pub fn close_async<F: 'a + FnOnce(WriteStreamController) -> Fut, Fut: 'a + Future<Output = Result<()>>> (mut self, f: F) -> Self {
         let f = move |inner| {
             let fut = f(WriteStreamController { inner }).map_ok(|_| JsValue::UNDEFINED);
             return wasm_bindgen_futures::future_to_promise(fut)
@@ -349,7 +326,7 @@ impl<'a, T> WriteBuilder<'a, T> {
 
     /// This method, also defined by the developer, will be called if the app signals that it wishes to abruptly close the stream and put it in an errored state. It can clean up any held resources, much like close(), but abort() will be called even if writes are queued up — those chunks will be thrown away.
     #[inline]
-    pub fn abort_async<F: 'a + FnOnce(JsValue) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
+    pub fn abort_async<F: 'a + FnOnce(JsValue) -> Fut, Fut: 'a + Future<Output = Result<()>>> (mut self, f: F) -> Self {
         let f = move |c| {
             let fut = f(c).map_ok(|_| JsValue::UNDEFINED);
             return wasm_bindgen_futures::future_to_promise(fut)
@@ -364,6 +341,52 @@ impl<'a, T> WriteBuilder<'a, T> {
 
         self.abort = Some(MaybePromise::Promise(Closure::wrap(f.into_fn_mut()), PhantomData));
         self
+    }
+
+    pub fn build (self) -> Result<JsWriteStream<'a, T>> {
+        macro_rules! set {
+            ($($name:ident [$key:literal] = $value:expr;)+) => {
+                $(
+                    js_sys::Reflect::set(&$name, &JsValue::from_str($key), $value)?;
+                )+
+            };
+        }
+
+        let underlying_source = js_sys::Object::new();
+
+        if let Some(ref start) = self.start {
+            set! { underlying_source["start"] = start.as_ref(); }
+        }
+
+        if let Some(ref write) = self.write {
+            set! { underlying_source["write"] = write.as_ref(); }
+        }
+
+        if let Some(ref close) = self.close {
+            set! { underlying_source["close"] = close.as_ref(); }
+        }
+
+        if let Some(ref abort) = self.abort {
+            set! { underlying_source["abort"] = abort.as_ref(); }
+        }
+
+        let stream = web_sys::WritableStream::new_with_underlying_sink(&underlying_source)?;
+        let mut result = JsWriteStream::new(stream)?;
+        result._builder = Some(self);
+        return Ok(result)
+    }
+}
+
+impl<T> Default for WriteBuilder<'_, T> {
+    #[inline]
+    fn default () -> Self {
+        return Self {
+            start: None,
+            write: None,
+            close: None,
+            abort: None,
+            _phtm: PhantomData
+        }
     }
 }
 
@@ -390,12 +413,6 @@ impl<T: ?Sized> ReadStreamController<T> {
     }
 
     #[inline]
-    pub fn enqueue_serialize (&self, chunk: &T) -> Result<()> where T: Serialize {
-        let chunk = serde_wasm_bindgen::to_value(chunk)?;
-        return self.inner.enqueue_with_chunk(&chunk)
-    }
-
-    #[inline]
     pub fn error (&self, e: Option<&JsValue>) {
         match e {
             Some(e) => self.inner.error_with_e(e),
@@ -411,7 +428,12 @@ pub struct WriteStreamController {
 
 impl WriteStreamController {
     #[inline]
-    pub fn signal (&self) -> AbortSignal {
+    pub fn raw_signal (&self) -> web_sys::AbortSignal {
+        return self.inner.signal()
+    }
+
+    #[inline]
+    pub fn signal<T> (&self) -> Result<AbortSignal<T>> {
         return AbortSignal::new(self.inner.signal())
     }
 

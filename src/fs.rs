@@ -234,20 +234,20 @@ impl Metadata {
 pub struct FileWrite {
     file: JsFile,
     pos: u64,
-    inner: JsWriteStream
+    inner: JsWriteStream<'static, Uint8Array>
 }
 
 impl FileWrite {
     /// Converts [`FileWrite`] into [`JsWriteStream`]
     #[inline]
-    pub fn into_write_stream (self) -> JsWriteStream {
+    pub fn into_write_stream (self) -> JsWriteStream<'static, Uint8Array> {
         return self.inner
     }
 
     /// Writes a chunk into the file instance
     #[inline]
     pub async fn write_chunk (&mut self, buf: &[u8]) -> Result<()> {
-        self.inner.write_chunk(buf).await?;
+        self.inner.write_slice(buf).await?;
         self.pos += buf.len() as u64;
         return Ok(())
     }
@@ -268,7 +268,7 @@ impl FileWrite {
             }
         };
 
-        JsFuture::from(self.inner.stream.unchecked_ref::<FileSystemWritableFileStream>().seek(offset)).await?;
+        JsFuture::from(self.inner._stream.unchecked_ref::<FileSystemWritableFileStream>().seek(offset)).await?;
         self.pos = offset;
         return Ok(())
     }
