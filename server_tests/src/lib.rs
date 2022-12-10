@@ -166,7 +166,7 @@ fn test_fs () -> Result<()> {
                 .read_remaining()
                 .await?;
 
-            unsafe { ::web_sys::console::log_1(&Uint8Array::view(&meta)) };
+            //unsafe { ::web_sys::console::log_1(&Uint8Array::view(&meta)) };
             Ok(())
         })
     });

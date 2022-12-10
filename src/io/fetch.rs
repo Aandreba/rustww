@@ -94,7 +94,7 @@ impl IntoFetchBody for Arc<str> {
 }
 
 /// A fetch request's method
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[wasm_bindgen]
 pub enum Method {
     #[default]

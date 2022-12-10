@@ -430,7 +430,7 @@ macro_rules! impl_typed_array {
                 #[cfg(docsrs)]
                 #[inline]
                 fn bytes_per_element () -> u32 {
-                    0
+                    <$t>::BITS / 8
                 }
                 
                 #[cfg(not(docsrs))]

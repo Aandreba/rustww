@@ -44,7 +44,7 @@ impl<'a, T: JsCast> ReadBuilder<'a, T> {
     /// This is a method, called immediately when the object is constructed. The contents of this method are defined by the developer, and should aim to get access to the stream source, and do anything else required to set up the stream functionality.
     #[inline]
     pub fn start<F: 'a + FnOnce(ReadStreamController<T>) -> Result<()>> (mut self, f: F) -> Self {
-        let f = move |inner| f(ReadStreamController { inner });
+        let f = move |inner| f(ReadStreamController { inner, _phtm: PhantomData });
         let f = unsafe {
             core::mem::transmute::<
                 Box<dyn 'a + FnOnce(ReadableStreamDefaultController) -> Result<()>>,
@@ -60,7 +60,7 @@ impl<'a, T: JsCast> ReadBuilder<'a, T> {
     #[inline]
     pub fn start_async<F: 'a + FnOnce(ReadStreamController<T>) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
         let f = move |inner| {
-            let fut = f(ReadStreamController { inner }).map_ok(|_| JsValue::UNDEFINED);
+            let fut = f(ReadStreamController { inner, _phtm: PhantomData }).map_ok(|_| JsValue::UNDEFINED);
             return wasm_bindgen_futures::future_to_promise(fut)
         };
 
@@ -78,7 +78,7 @@ impl<'a, T: JsCast> ReadBuilder<'a, T> {
     /// This method, also defined by the developer, will be called repeatedly when the stream's internal queue of chunks is not full, up until it reaches its high water mark.
     #[inline]
     pub fn pull<F: 'a + FnMut(ReadStreamController<T>) -> Result<()>> (mut self, mut f: F) -> Self {
-        let f = move |inner| f(ReadStreamController { inner });
+        let f = move |inner| f(ReadStreamController { inner, _phtm: PhantomData });
         let f = unsafe {
             core::mem::transmute::<
                 Box<dyn 'a + FnMut(ReadableStreamDefaultController) -> Result<()>>,
@@ -94,7 +94,7 @@ impl<'a, T: JsCast> ReadBuilder<'a, T> {
     #[inline]
     pub fn pull_async<F: 'a + FnMut(ReadStreamController<T>) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, mut f: F) -> Self {
         let f = move |inner| {
-            let fut = f(ReadStreamController { inner }).map_ok(|_| JsValue::UNDEFINED);
+            let fut = f(ReadStreamController { inner, _phtm: PhantomData }).map_ok(|_| JsValue::UNDEFINED);
             return wasm_bindgen_futures::future_to_promise(fut)
         };
 
@@ -216,7 +216,7 @@ impl<'a, T: JsCast> WriteBuilder<'a, T> {
 
     /// This is a method, called immediately when the object is constructed. The contents of this method are defined by the developer, and should aim to get access to the underlying sink.
     #[inline]
-    pub fn start_async<F: 'a + FnOnce(WriteStreamController) -> Fut, Fut: 'a + Future<Output = Result<()>>> (mut self, f: F) -> Self {
+    pub fn start_async<F: 'a + FnOnce(WriteStreamController) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
         let f = move |inner| {
             let fut = f(WriteStreamController { inner }).map_ok(|_| JsValue::UNDEFINED);
             return wasm_bindgen_futures::future_to_promise(fut)
@@ -235,7 +235,7 @@ impl<'a, T: JsCast> WriteBuilder<'a, T> {
 
     /// This method, also defined by the developer, will be called when a new chunk of data (specified in the chunk parameter) is ready to be written to the underlying sink.
     #[inline]
-    pub fn write<F: 'a + FnMut(T, WriteStreamController) -> Result<()>> (mut self, f: F) -> Self {
+    pub fn write<F: 'a + FnMut(T, WriteStreamController) -> Result<()>> (mut self, mut f: F) -> Self {
         let f = move |chunk, inner| {
             let chunk = JsCast::dyn_into::<T>(chunk)?;
             f(chunk, WriteStreamController { inner })
@@ -254,7 +254,7 @@ impl<'a, T: JsCast> WriteBuilder<'a, T> {
 
     /// This method, also defined by the developer, will be called when a new chunk of data (specified in the chunk parameter) is ready to be written to the underlying sink.
     #[inline]
-    pub fn write_async<F: 'a + FnMut(T, WriteStreamController) -> Fut, Fut: 'a + Future<Output = Result<()>>> (mut self, f: F) -> Self {
+    pub fn write_async<F: 'a + FnMut(T, WriteStreamController) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, mut f: F) -> Self {
         let f = move |chunk: JsValue, inner| {
             let chunk = match JsCast::dyn_into::<T>(chunk) {
                 Ok(x) => x,
@@ -293,7 +293,7 @@ impl<'a, T: JsCast> WriteBuilder<'a, T> {
 
     /// This method, also defined by the developer, will be called if the app signals that it has finished writing chunks to the stream. The contents should do whatever is necessary to finalize writes to the underlying sink, and release access to it.
     #[inline]
-    pub fn close_async<F: 'a + FnOnce(WriteStreamController) -> Fut, Fut: 'a + Future<Output = Result<()>>> (mut self, f: F) -> Self {
+    pub fn close_async<F: 'a + FnOnce(WriteStreamController) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
         let f = move |inner| {
             let fut = f(WriteStreamController { inner }).map_ok(|_| JsValue::UNDEFINED);
             return wasm_bindgen_futures::future_to_promise(fut)
@@ -326,7 +326,7 @@ impl<'a, T: JsCast> WriteBuilder<'a, T> {
 
     /// This method, also defined by the developer, will be called if the app signals that it wishes to abruptly close the stream and put it in an errored state. It can clean up any held resources, much like close(), but abort() will be called even if writes are queued up — those chunks will be thrown away.
     #[inline]
-    pub fn abort_async<F: 'a + FnOnce(JsValue) -> Fut, Fut: 'a + Future<Output = Result<()>>> (mut self, f: F) -> Self {
+    pub fn abort_async<F: 'a + FnOnce(JsValue) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
         let f = move |c| {
             let fut = f(c).map_ok(|_| JsValue::UNDEFINED);
             return wasm_bindgen_futures::future_to_promise(fut)
