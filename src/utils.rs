@@ -2,52 +2,125 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 use std::{cell::{UnsafeCell, Cell}, mem::{MaybeUninit}, rc::{Rc, Weak}, task::{Waker, Poll, Context}, future::Future, ops::{Deref, DerefMut}, collections::VecDeque, fmt::{Debug, Display}, pin::Pin, io::ErrorKind, marker::{PhantomPinned, PhantomData}, any::{Any, TypeId}};
-use futures::{Stream, AsyncRead};
+use futures::{Stream, AsyncRead, stream::Aborted, FutureExt};
 use js_sys::*;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use utils_atomics::{flag::{AsyncFlag, AsyncSubscribe}, TakeCell};
 use wasm_bindgen::{__rt::WasmRefCell, prelude::*, closure::WasmClosureFnOnce, JsStatic, JsCast};
 use crate::Result;
+use pin_project_lite::pin_project;
 
 mod sealed { pub trait Sealed {} }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
-#[repr(transparent)]
-pub(crate) struct AssertUnpin<T> (T);
+#[derive(Debug)]
+struct AbortableInner {
+    aborted: Cell<bool>,
+    wakers: UnsafeCell<Vec<Waker>>
+}
 
-impl<T> AssertUnpin<T> {
-    #[inline]
-    pub fn new (t: T) -> Self where T: Unpin {
-        unsafe { Self::new_unchecked(t) }
-    }
-    
-    #[inline]
-    pub unsafe fn new_unchecked (t: T) -> Self {
-        Self(t)
-    }
-
-    #[inline]
-    pub fn into_inner (self) -> T {
-        self.0
+pin_project! {
+    #[derive(Debug)]
+    pub(crate) struct Abortable<Fut> {
+        #[pin] fut: Fut,
+        handle: AbortHandle,
+        awaited: bool
     }
 }
 
-impl<T> Deref for AssertUnpin<T> {
-    type Target = T;
+impl<Fut: Future> Abortable<Fut> {
+    #[inline]
+    pub fn new (fut: Fut, handle: AbortHandle) -> Self {
+        return Self {
+            fut,
+            handle,
+            awaited: false
+        }
+    }
 
     #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.0
+    pub fn is_aborted (&self) -> bool {
+        self.handle.is_aborted()
     }
 }
 
-impl<T> DerefMut for AssertUnpin<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+impl<Fut: Future> Future for Abortable<Fut> {
+    type Output = ::core::result::Result<Fut::Output, Aborted>;
+
+    #[inline]
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut this = self.project();
+        if this.handle.is_aborted() {
+            return Poll::Ready(Err(Aborted))
+        }
+
+        if !*this.awaited {
+            let wakers = unsafe { &mut *this.handle.inner.wakers.get() };
+            wakers.push(cx.waker().clone());
+            *this.awaited = true
+        }
+
+        return this.fut.poll_unpin(cx).map(Ok)
     }
 }
 
-impl<T> Unpin for AssertUnpin<T> {}
+impl<Fut: Clone> Clone for Abortable<Fut> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            fut: self.fut.clone(),
+            handle: self.handle.clone(),
+            awaited: false
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AbortHandle {
+    inner: Rc<AbortableInner>
+}
+
+impl AbortHandle {
+    #[inline]
+    pub fn new () -> Self {
+        return Self {
+            inner: Rc::new(AbortableInner {
+                aborted: Cell::new(false),
+                wakers: UnsafeCell::new(Vec::new())
+            })
+        }
+    }
+
+    #[inline]
+    pub fn new_aborted () -> Self {
+        return Self {
+            inner: Rc::new(AbortableInner {
+                aborted: Cell::new(true),
+                wakers: UnsafeCell::new(Vec::new())
+            })
+        }
+    }
+
+    #[inline]
+    pub fn is_aborted (&self) -> bool {
+        return self.inner.aborted.get()
+    }
+
+    #[inline]
+    pub fn abort (&self) {
+        self.inner.aborted.set(true);
+        let wakers = unsafe { &mut *self.inner.wakers.get() };
+        for waker in wakers.drain(..) {
+            waker.wake()
+        } 
+    }
+}
+
+impl Default for AbortHandle {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 struct ChannelInner<T> {
     buffer: VecDeque<T>,
@@ -232,7 +305,7 @@ pub fn abort<T> () -> Result<(AbortController<T>, AbortSignal<T>)> {
 }
 
 /// Represents a controller object that allows you to abort one or more Web requests as and when desired.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AbortController<T> {
     inner: AbortControllerExt,
     _phtm: PhantomData<T>
@@ -273,12 +346,34 @@ impl<T> AbortController<T> {
     pub fn signal (&self) -> Result<AbortSignal<T>> {
         return AbortSignal::new(self.inner.signal())
     }
+
+    /// Creates a [`Promise`] that resolves when the controller aborts. 
+    pub fn signal_promise (&self) -> Promise {
+        let signal = self.raw_signal();
+        return Promise::new(&mut |resolve, reject| {
+            if let Err(e) = signal.add_event_listener_with_callback("abort", &resolve) {
+                if let Err(e) = reject.call1(&JsValue::UNDEFINED, &e) {
+                    ::wasm_bindgen::throw_val(e);
+                }
+            }
+        })
+    }
 }
 
 impl AbortController<()> {
     #[inline]
     pub fn abort (&self) {
         web_sys::AbortController::abort(&self.inner)
+    }
+}
+
+impl<T> Clone for AbortController<T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            _phtm: self._phtm.clone()
+        }
     }
 }
 
@@ -354,6 +449,18 @@ impl<T> AbortSignal<T> {
         return JsCast::dyn_into::<T>(reason).map(Some)
     }
 
+    /// Creates a [`Promise`] that resolves when the signal is aborted. 
+    pub fn promise (&self) -> Promise {
+        return Promise::new(&mut |resolve, reject| {
+            if let Err(e) = self.inner.add_event_listener_with_callback("abort", &resolve) {
+                if let Err(e) = reject.call1(&JsValue::UNDEFINED, &e) {
+                    ::wasm_bindgen::throw_val(e);
+                }
+            }
+        })
+    }
+
+    /// Attempts to clone the signal
     #[inline]
     pub fn try_clone (&self) -> Result<Self> {
         return Self::new(self.inner.clone().unchecked_into())

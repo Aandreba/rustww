@@ -1,14 +1,11 @@
-use futures::{Future, TryFutureExt};
+use futures::{Future};
 use wasm_bindgen::{prelude::Closure, JsValue};
-use web_sys::{ReadableByteStreamController, ReadableStreamDefaultController, WritableStreamDefaultController};
-use js_sys::*;
-use crate::Result;
+use web_sys::{ReadableStreamDefaultController, WritableStreamDefaultController};
+use crate::{Result, utils::{AbortHandle, Abortable}};
 use super::*;
-use wasm_bindgen::Clamped;
 use core::marker::PhantomData;
 use wasm_bindgen::closure::WasmClosureFnOnce;
 use crate::utils::AbortSignal;
-use serde::{*, de::DeserializeOwned};
 use wasm_bindgen::JsCast;
 
 #[derive(Debug)]
@@ -32,13 +29,20 @@ pub struct ReadBuilder<'a, T> {
     start: Option<MaybePromise<'a, (ReadableStreamDefaultController,)>>,
     pull: Option<MaybePromise<'a, (ReadableStreamDefaultController,)>>,
     cancel: Option<MaybePromise<'a, (JsValue,)>>,
+    pub(super) handle: AbortHandle,
     _phtm: PhantomData<T>
 }
 
 impl<'a, T: JsCast> ReadBuilder<'a, T> {
     #[inline]
-    pub fn new () -> Self {
-        return Default::default()
+    pub fn new () -> Result<Self> {
+        return Ok(Self {
+            start: None,
+            pull: None,
+            cancel: None,
+            handle: AbortHandle::new(),
+            _phtm: PhantomData
+        })
     }
 
     /// This is a method, called immediately when the object is constructed. The contents of this method are defined by the developer, and should aim to get access to the stream source, and do anything else required to set up the stream functionality.
@@ -59,9 +63,15 @@ impl<'a, T: JsCast> ReadBuilder<'a, T> {
     /// This is a method, called immediately when the object is constructed. The contents of this method are defined by the developer, and should aim to get access to the stream source, and do anything else required to set up the stream functionality.
     #[inline]
     pub fn start_async<F: 'a + FnOnce(ReadStreamController<T>) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
+        let my_handle = self.handle.clone();
         let f = move |inner| {
-            let fut = f(ReadStreamController { inner, _phtm: PhantomData }).map_ok(|_| JsValue::UNDEFINED);
-            return wasm_bindgen_futures::future_to_promise(fut)
+            let fut = Abortable::new(f(ReadStreamController { inner, _phtm: PhantomData }), my_handle);
+            return wasm_bindgen_futures::future_to_promise(async move {
+                match fut.await {
+                    Ok(Ok(_)) | Err(_) => return Ok(JsValue::UNDEFINED),
+                    Ok(Err(e)) => return Err(e) 
+                }
+            });
         };
 
         let f = unsafe {
@@ -93,9 +103,15 @@ impl<'a, T: JsCast> ReadBuilder<'a, T> {
     /// This method, also defined by the developer, will be called repeatedly when the stream's internal queue of chunks is not full, up until it reaches its high water mark.
     #[inline]
     pub fn pull_async<F: 'a + FnMut(ReadStreamController<T>) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, mut f: F) -> Self {
+        let my_handle = self.handle.clone();
         let f = move |inner| {
-            let fut = f(ReadStreamController { inner, _phtm: PhantomData }).map_ok(|_| JsValue::UNDEFINED);
-            return wasm_bindgen_futures::future_to_promise(fut)
+            let fut = Abortable::new(f(ReadStreamController { inner, _phtm: PhantomData }), my_handle.clone());
+            return wasm_bindgen_futures::future_to_promise(async move {
+                match fut.await {
+                    Ok(Ok(_)) | Err(_) => return Ok(JsValue::UNDEFINED),
+                    Ok(Err(e)) => return Err(e) 
+                }
+            });
         };
 
         let f = unsafe {
@@ -126,9 +142,15 @@ impl<'a, T: JsCast> ReadBuilder<'a, T> {
     /// This method, also defined by the developer, will be called if the app signals that the stream is to be cancelled
     #[inline]
     pub fn cancel_async<F: 'a + FnOnce(JsValue) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
+        let my_handle = self.handle.clone();
         let f = move |c| {
-            let fut = f(c).map_ok(|_| JsValue::UNDEFINED);
-            return wasm_bindgen_futures::future_to_promise(fut)
+            let fut = Abortable::new(f(c), my_handle);
+            return wasm_bindgen_futures::future_to_promise(async move {
+                match fut.await {
+                    Ok(Ok(_)) | Err(_) => return Ok(JsValue::UNDEFINED),
+                    Ok(Err(e)) => return Err(e) 
+                }
+            });
         };
 
         let f = unsafe {
@@ -172,31 +194,27 @@ impl<'a, T: JsCast> ReadBuilder<'a, T> {
     }
 }
 
-impl<T> Default for ReadBuilder<'_, T> {
-    #[inline]
-    fn default () -> Self {
-        return Self {
-            start: None,
-            pull: None,
-            cancel: None,
-            _phtm: PhantomData
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct WriteBuilder<'a, T> {
     start: Option<MaybePromise<'a, (WritableStreamDefaultController,)>>,
     write: Option<MaybePromise<'a, (JsValue, WritableStreamDefaultController)>>,
     close: Option<MaybePromise<'a, (WritableStreamDefaultController,)>>,
     abort: Option<MaybePromise<'a, (JsValue,)>>,
+    pub(super) handle: AbortHandle,
     _phtm: PhantomData<T>
 }
 
 impl<'a, T: JsCast> WriteBuilder<'a, T> {
     #[inline]
-    pub fn new () -> Self {
-        return Default::default()
+    pub fn new () -> Result<Self> {
+        return Ok(Self {
+            start: None,
+            write: None,
+            close: None,
+            abort: None,
+            handle: AbortHandle::new(),
+            _phtm: PhantomData
+        })
     }
 
     /// This is a method, called immediately when the object is constructed. The contents of this method are defined by the developer, and should aim to get access to the underlying sink.
@@ -217,9 +235,15 @@ impl<'a, T: JsCast> WriteBuilder<'a, T> {
     /// This is a method, called immediately when the object is constructed. The contents of this method are defined by the developer, and should aim to get access to the underlying sink.
     #[inline]
     pub fn start_async<F: 'a + FnOnce(WriteStreamController) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
+        let my_handle = self.handle.clone();
         let f = move |inner| {
-            let fut = f(WriteStreamController { inner }).map_ok(|_| JsValue::UNDEFINED);
-            return wasm_bindgen_futures::future_to_promise(fut)
+            let fut = Abortable::new(f(WriteStreamController { inner }), my_handle);
+            return wasm_bindgen_futures::future_to_promise(async move {
+                match fut.await {
+                    Ok(Ok(_)) | Err(_) => return Ok(JsValue::UNDEFINED),
+                    Ok(Err(e)) => return Err(e) 
+                }
+            });
         };
 
         let f = unsafe {
@@ -255,14 +279,20 @@ impl<'a, T: JsCast> WriteBuilder<'a, T> {
     /// This method, also defined by the developer, will be called when a new chunk of data (specified in the chunk parameter) is ready to be written to the underlying sink.
     #[inline]
     pub fn write_async<F: 'a + FnMut(T, WriteStreamController) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, mut f: F) -> Self {
+        let my_handle = self.handle.clone();
         let f = move |chunk: JsValue, inner| {
             let chunk = match JsCast::dyn_into::<T>(chunk) {
                 Ok(x) => x,
                 Err(e) => return js_sys::Promise::reject(&e),
             };
 
-            let fut = f(chunk, WriteStreamController { inner }).map_ok(|_| JsValue::UNDEFINED);
-            return wasm_bindgen_futures::future_to_promise(fut)
+            let fut = Abortable::new(f(chunk, WriteStreamController { inner }), my_handle.clone());
+            return wasm_bindgen_futures::future_to_promise(async move {
+                match fut.await {
+                    Ok(Ok(_)) | Err(_) => return Ok(JsValue::UNDEFINED),
+                    Ok(Err(e)) => return Err(e) 
+                }
+            });
         };
 
         let f = unsafe {
@@ -294,9 +324,15 @@ impl<'a, T: JsCast> WriteBuilder<'a, T> {
     /// This method, also defined by the developer, will be called if the app signals that it has finished writing chunks to the stream. The contents should do whatever is necessary to finalize writes to the underlying sink, and release access to it.
     #[inline]
     pub fn close_async<F: 'a + FnOnce(WriteStreamController) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
+        let my_handle = self.handle.clone();
         let f = move |inner| {
-            let fut = f(WriteStreamController { inner }).map_ok(|_| JsValue::UNDEFINED);
-            return wasm_bindgen_futures::future_to_promise(fut)
+            let fut = Abortable::new(f(WriteStreamController { inner }), my_handle);
+            return wasm_bindgen_futures::future_to_promise(async move {
+                match fut.await {
+                    Ok(Ok(_)) | Err(_) => return Ok(JsValue::UNDEFINED),
+                    Ok(Err(e)) => return Err(e) 
+                }
+            });
         };
 
         let f = unsafe {
@@ -327,9 +363,15 @@ impl<'a, T: JsCast> WriteBuilder<'a, T> {
     /// This method, also defined by the developer, will be called if the app signals that it wishes to abruptly close the stream and put it in an errored state. It can clean up any held resources, much like close(), but abort() will be called even if writes are queued up — those chunks will be thrown away.
     #[inline]
     pub fn abort_async<F: 'a + FnOnce(JsValue) -> Fut, Fut: 'static + Future<Output = Result<()>>> (mut self, f: F) -> Self {
+        let my_handle = self.handle.clone();
         let f = move |c| {
-            let fut = f(c).map_ok(|_| JsValue::UNDEFINED);
-            return wasm_bindgen_futures::future_to_promise(fut)
+            let fut = Abortable::new(f(c), my_handle);
+            return wasm_bindgen_futures::future_to_promise(async move {
+                match fut.await {
+                    Ok(Ok(_)) | Err(_) => return Ok(JsValue::UNDEFINED),
+                    Ok(Err(e)) => return Err(e) 
+                }
+            });
         };
 
         let f = unsafe {
@@ -374,19 +416,6 @@ impl<'a, T: JsCast> WriteBuilder<'a, T> {
         let mut result = JsWriteStream::new(stream)?;
         result._builder = Some(self);
         return Ok(result)
-    }
-}
-
-impl<T> Default for WriteBuilder<'_, T> {
-    #[inline]
-    fn default () -> Self {
-        return Self {
-            start: None,
-            write: None,
-            close: None,
-            abort: None,
-            _phtm: PhantomData
-        }
     }
 }
 

@@ -3,8 +3,9 @@
 use std::{time::Duration, cell::Cell};
 use futures::{TryStreamExt, StreamExt, join, AsyncReadExt};
 use js_sys::Uint8Array;
-use rustww::{notify::{Notification}, geo::Geolocation, orient::{Orientation, Motion}, math::*, battery::Battery, io::{JsReadStream, Request}, fs::File, task::spawn_catch_local, time::Interval, Result, log};
+use rustww::{notify::{Notification}, geo::Geolocation, orient::{Orientation, Motion}, math::*, battery::Battery, io::{JsReadStream, Request}, fs::File, task::spawn_catch_local, time::Interval, Result, log, prelude::JsWriteStream, println};
 use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsValue, JsCast};
+use wasm_bindgen_futures::spawn_local;
 use web_sys::{window, Response, Blob};
 
 #[wasm_bindgen]
@@ -182,4 +183,28 @@ fn test_fs () -> Result<()> {
         .append_with_node_1(&elem)?;
 
     return Ok(())
+}
+
+fn test_writer () {
+    spawn_catch_local(async move {
+        let mut vec = Vec::<u8>::new();
+        let mut writer: JsWriteStream<'_, Uint8Array> = JsWriteStream::custom()
+            .write(|chunk: Uint8Array, con| {
+                let len = chunk.length() as usize;
+                vec.reserve(vec.len() + len);
+                unsafe {
+                    chunk.raw_copy_to_ptr(vec.as_mut_ptr().add(vec.len()));
+                    vec.set_len(vec.len() + len);
+                };
+                Ok(())
+            })
+            .build()?;
+
+
+        writer.write_slice(&[1, 2, 3]).await;
+        drop(writer);
+
+        println!("{vec:?}");
+        Ok(())
+    });
 }

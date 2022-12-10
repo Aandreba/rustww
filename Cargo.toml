@@ -22,6 +22,7 @@ getrandom = { version = "0.2.8", features = ["js"] }
 into_string = "2.0.0"
 js-sys = "0.3.60"
 packed_simd_2 = { version = "0.3.8", optional = true }
+pin-project-lite = "0.2.9"
 rand = "0.8.5"
 serde = { version = "1.0.147", features = ["derive"] }
 serde-wasm-bindgen = "0.4.5"

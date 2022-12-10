@@ -6,6 +6,7 @@ compile_error!("`simd` feature enabled without target feature `simd128`");
 
 #[wasm_bindgen]
 extern "C" {
+    #[allow(unused_doc_comments)]
     #[doc(hidden)]
     #[wasm_bindgen(js_namespace = console, js_name = log)]
     pub fn _log (s: &str);

@@ -4,9 +4,8 @@ use futures::{Future, TryFutureExt, Stream, FutureExt};
 use js_sys::{Uint8Array};
 use wasm_bindgen::{JsCast, JsValue, prelude::{wasm_bindgen}};
 use wasm_bindgen_futures::JsFuture;
-use web_sys::StreamPipeOptions;
 use crate::{Result, utils::{TypedArrayExt, TypedArray}};
-use super::{IntoFetchBody, JsWriteStream};
+use super::{IntoFetchBody};
 
 #[wasm_bindgen]
 extern "C" {
@@ -70,7 +69,7 @@ impl<'a, T: JsCast> JsReadStream<'a, T> {
     /// Returns a builder for a custom [`JsReadStream`]
     #[docfg(web_sys_unstable_apis)]
     #[inline]
-    pub fn custom () -> super::builder::ReadBuilder<'a, T> {
+    pub fn custom () -> Result<super::builder::ReadBuilder<'a, T>> {
         return super::builder::ReadBuilder::new()
     }
 
@@ -154,6 +153,12 @@ impl<T> Drop for JsReadStream<'_, T> {
         if let Some(ref reader) = self.reader {
             reader.release_lock()
         }
+
+        #[cfg(web_sys_unstable_apis)]
+        if let Some(ref builder) = self._builder {
+            builder.handle.abort();
+        }
+
         let _ = self._stream.cancel();
     }
 }

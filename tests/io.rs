@@ -31,22 +31,20 @@ async fn ip_text () -> Result<()> {
     Ok(())
 }
 
-#[cfg(web_sys_unstable_apis)]
+/*#[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen_test]
 async fn custom_read () -> Result<()> {
     use std::time::Duration;
-    use futures::{StreamExt, TryStreamExt};
-
+    use js_sys::Uint8Array;
     use rand::random;
-    use rustww::{time::spawn_interval, log_js};
-    use wasm_bindgen::JsValue;
+    use rustww::{log_js};
 
-    let mut interval = std::cell::Cell::new(None);
-    let mut reader = JsReadStream::custom()
+    let interval = std::cell::Cell::new(None);
+    let mut reader: JsReadStream<Uint8Array> = JsReadStream::custom()
         .start(|con| {
             let int = Interval::new(Duration::from_millis(500), move || {
-                let byte = random::<u8>();
-                con.enqueue(&[byte]).unwrap();
+                let byte = Uint8Array::from(&[random()] as &[u8]);
+                con.enqueue(&byte).unwrap();
             })?;
 
             interval.set(Some(int));
@@ -56,47 +54,73 @@ async fn custom_read () -> Result<()> {
             let _ = interval.take();
             Ok(())
         })
-        .build()?
-        .take(5);
+        .build()?;
 
-    while let Some(next) = reader.try_next().await? {
+    while let Some(next) = reader.read_chunk().await? {
         log_js!(next)
     }
 
+    Ok(())
+}*/
+
+#[cfg(web_sys_unstable_apis)]
+#[wasm_bindgen_test]
+async fn write_slice () -> Result<()> {
+    use js_sys::Uint8Array;
+
+    let mut vec = Vec::<u8>::new();
+    let mut writer: JsWriteStream<'_, Uint8Array> = JsWriteStream::custom()
+        .write(|chunk: Uint8Array, con| {
+            let len = chunk.length() as usize;
+            vec.reserve(vec.len() + len);
+            unsafe {
+                chunk.raw_copy_to_ptr(vec.as_mut_ptr().add(vec.len()));
+                vec.set_len(vec.len() + len);
+            };
+            Ok(())
+        })
+        .build()?;
+
+    writer.write_slice(&[1, 2, 3]).await;
+    drop(writer);
+
+    println!("{vec:?}");
     Ok(())
 }
 
 #[cfg(web_sys_unstable_apis)]
 #[wasm_bindgen_test]
-async fn custom_write () -> Result<()> {
-    use std::time::Duration;
-    use futures::{StreamExt, TryStreamExt};
+async fn write_slice_async () -> Result<()> {
+    use std::rc::Rc;
+    use js_sys::Uint8Array;
+    use wasm_bindgen::__rt::WasmRefCell;
 
-    use rand::random;
-    use rustww::{time::spawn_interval, log_js};
-    use wasm_bindgen::JsValue;
-
-    let mut interval = std::cell::Cell::new(None);
-    let mut reader = JsReadStream::custom()
-        .start(|con| {
-            let int = Interval::new(Duration::from_millis(500), move || {
-                let byte = random::<u8>();
-                con.enqueue(&[byte]).unwrap();
-            })?;
-
-            interval.set(Some(int));
-            Ok(())
+    let mut vec = Rc::new(WasmRefCell::new(Vec::<u8>::new()));
+    let mut writer: JsWriteStream<'_, Uint8Array> = JsWriteStream::custom()
+        .write_async(|chunk: Uint8Array, con| {
+            let vec = vec.clone();
+            async move {
+                let mut vec = vec.borrow_mut();
+                let len = chunk.length() as usize;
+                vec.reserve(vec.len() + len);
+                unsafe {
+                    chunk.raw_copy_to_ptr(vec.as_mut_ptr().add(vec.len()));
+                    vec.set_len(vec.len() + len);
+                };
+                Ok(())
+            }
         })
-        .cancel(|_| {
-            let _ = interval.take();
-            Ok(())
-        })
-        .build()?
-        .take(5);
+        .build()?;
 
-    while let Some(next) = reader.try_next().await? {
-        log_js!(next)
-    }
+    writer.write_slice(&[4, 5, 6]).await;
+    drop(writer);
 
+    println!("{vec:?}");
     Ok(())
+}
+
+#[cfg(web_sys_unstable_apis)]
+#[wasm_bindgen_test]
+fn write_drop () {
+    // todo
 }

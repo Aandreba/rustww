@@ -20,7 +20,7 @@ impl<'a, T: AsRef<JsValue>> JsWriteStream<'a, T> {
     /// Returns a builder for a custom [`JsWriteStream`]
     #[docfg(web_sys_unstable_apis)]
     #[inline]
-    pub fn custom () -> super::builder::WriteBuilder<'a, T> where T: wasm_bindgen::JsCast {
+    pub fn custom () -> Result<super::builder::WriteBuilder<'a, T>> where T: wasm_bindgen::JsCast {
         return super::builder::WriteBuilder::new()
     }
 
@@ -87,8 +87,8 @@ impl<'a> JsWriteStream<'a, Uint8Array> {
         use futures::AsyncWriteExt;
         let w = std::rc::Rc::new(wasm_bindgen::__rt::WasmRefCell::new(w)); 
 
-        return Self::custom()
-            .write_async(move |chunk: Uint8Array, con| {
+        return Self::custom()?
+            .write_async(move |chunk: Uint8Array, _con| {
                 let w = w.clone();
                 return async move {
                     let mut w = w.borrow_mut();
@@ -129,6 +129,12 @@ impl<T> Drop for JsWriteStream<'_, T> {
         if let Some(ref writer) = self.writer {
             writer.release_lock()
         }
+
+        #[cfg(web_sys_unstable_apis)]
+        if let Some(ref builder) = self._builder {
+            builder.handle.abort();
+        }
+
         let _ = self._stream.abort();
     }
 }
