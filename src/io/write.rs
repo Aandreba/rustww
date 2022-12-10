@@ -1,6 +1,7 @@
 use std::{marker::PhantomData, task::Poll};
 use docfg::docfg;
-use futures::{Future, FutureExt};
+use elor::Either;
+use futures::{Future, FutureExt, Sink};
 use js_sys::{Uint8Array, JsString};
 use wasm_bindgen::{JsValue};
 use wasm_bindgen_futures::JsFuture;
@@ -57,6 +58,14 @@ impl<'a, T: AsRef<JsValue>> JsWriteStream<'a, T> {
         }
         let _ = JsFuture::from(self._stream.abort()).await?;
         return Ok(())
+    }
+
+    pub fn into_sink (self) -> WriteSink<'a, T> where T: Unpin {
+        return WriteSink {
+            inner: self,
+            flush: Either::Left(js_sys::Array::new()),
+            close: None
+        }
     }
 
     #[inline]
@@ -121,6 +130,108 @@ impl<T> Drop for JsWriteStream<'_, T> {
             writer.release_lock()
         }
         let _ = self._stream.abort();
+    }
+}
+
+/// The [`Sink`](futures::Sink) version of [`JsWriteStream`]
+pub struct WriteSink<'a, T> {
+    inner: JsWriteStream<'a, T>,
+    flush: Either<js_sys::Array, JsFuture>,
+    close: Option<JsFuture>
+}
+
+impl<'a, T: Unpin> WriteSink<'a, T> {
+    fn poll_ready_inner (mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<()>> {
+        if let Either::Right(ref mut rhs) = self.flush {
+            if rhs.poll_unpin(cx)?.is_pending() {
+                return Poll::Pending
+            }
+            self.flush = Either::Left(js_sys::Array::new())
+        }
+        return Poll::Ready(Ok(()))
+    }
+
+    fn poll_flush_inner (mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<()>> {
+        if let Either::Left(ref array) = self.flush {
+            let promise = js_sys::Promise::all(array);
+            self.flush = Either::Right(JsFuture::from(promise))
+        }
+
+        let flush = unsafe { self.flush.as_mut().unwrap_right_unchecked() };
+        if flush.poll_unpin(cx)?.is_ready() {
+            self.flush = Either::Left(js_sys::Array::new());
+            return Poll::Ready(Ok(()))
+        }
+        return Poll::Pending
+    }
+
+    fn poll_close_inner (mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<()>> {
+        if self.close.is_none() {
+            if let Some(ref writer) = self.inner.writer.take() {
+                writer.release_lock()
+            }
+            self.close = Some(JsFuture::from(self.inner._stream.close()));
+        }
+
+        let close = unsafe { self.close.as_mut().unwrap_unchecked() };
+        if close.poll_unpin(cx)?.is_ready() {
+            self.close = None;
+            return Poll::Ready(Ok(()))
+        }
+        return Poll::Pending
+    }
+}
+
+impl<'a, T: Unpin + AsRef<JsValue>> Sink<T> for WriteSink<'a, T> {
+    type Error = JsValue;
+
+    #[inline]
+    fn poll_ready(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<()>> {
+        self.poll_ready_inner(cx)
+    }
+
+    fn start_send(mut self: std::pin::Pin<&mut Self>, item: T) -> Result<()> {
+        debug_assert!(self.flush.is_left());
+        let promise = self.inner.get_writer()?.write_with_chunk(item.as_ref());
+        unsafe { self.flush.as_mut().unwrap_left_unchecked().push(&promise) };
+        return Ok(())
+    }
+
+    #[inline]
+    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<()>> {
+        self.poll_flush_inner(cx)
+    }
+
+    #[inline]
+    fn poll_close(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<()>> {
+        self.poll_close_inner(cx)
+    }
+}
+
+impl<'a, T: Unpin + TypedArrayExt> Sink<&'a [T::Element]> for WriteSink<'a, T> {
+    type Error = JsValue;
+
+    #[inline]
+    fn poll_ready(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<()>> {
+        self.poll_ready_inner(cx)
+    }
+
+    fn start_send(mut self: std::pin::Pin<&mut Self>, item: &'a [T::Element]) -> Result<()> {
+        debug_assert!(self.flush.is_left());
+        let view = unsafe { T::view(item) };
+        let promise = self.inner.get_writer()?.write_with_chunk(view.as_ref());
+        unsafe { self.flush.as_mut().unwrap_left_unchecked().push(&promise) };
+        return Ok(())
+    }
+
+    #[inline]
+    fn poll_flush(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<()>> {
+        self.poll_flush_inner(cx)
+    }
+
+    #[inline]
+    fn poll_close(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Result<()>> {
+        self.poll_close_inner(cx)
     }
 }
 

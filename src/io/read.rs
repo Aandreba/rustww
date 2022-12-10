@@ -1,4 +1,4 @@
-use std::{task::{Poll}, marker::PhantomData, collections::VecDeque, ops::{Deref, DerefMut}};
+use std::{task::{Poll}, marker::PhantomData};
 use docfg::docfg;
 use futures::{Future, TryFutureExt, Stream, FutureExt};
 use js_sys::{Uint8Array};
@@ -114,6 +114,13 @@ impl<'a, T: JsCast> JsReadStream<'a, T> {
         return Ok(result)
     }
 
+    /// Turns [`JsReadStream`] into a [`Stream`]
+    #[inline]
+    pub fn into_stream (mut self) -> ReadStream<'a, T> where T: Unpin {
+        let current = Some(self.next_chunk());
+        return ReadStream { inner: self, current }
+    }
+
     /// Returns a [`Future`] that resolves when the next chunk of the stream is available
     #[inline]
     fn next_chunk (&mut self) -> NextChunk {
@@ -156,29 +163,25 @@ pub struct ReadStream<'a, T> {
     current: Option<NextChunk>
 }
 
-impl<'a, T: JsCast> Stream for ReadStream<'a, T> {
+impl<'a, T: Unpin + JsCast> Stream for ReadStream<'a, T> {
     type Item = Result<T>;
 
     #[inline]
     fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
-        if self.current.is_none() {
-            self.current = Some(self.inner.next_chunk())
+        if let Some(ref mut current) = self.current {
+            return match current.poll_unpin(cx)? {
+                Poll::Ready(ChunkResult { value: None, .. } | ChunkResult { done: true, .. }) => {
+                    self.current = None;
+                    Poll::Ready(None)
+                },
+                Poll::Ready(ChunkResult { value: Some(value), .. }) => {
+                    self.current = Some(self.inner.next_chunk());
+                    Poll::Ready(Some(JsCast::dyn_into::<T>(value)))
+                },
+                Poll::Pending => Poll::Pending
+            }
         }
-
-        let current = unsafe { self.current.as_mut().unwrap_unchecked() };
-        return match current.poll_unpin(cx)? {
-            Poll::Ready() => todo!(),
-            Poll::Pending => Poll::Pending
-        }
-    }
-}
-
-impl<'a, T> Deref for ReadStream<'a, T> {
-    type Target = JsReadStream<'a, T>;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.inner
+        return Poll::Ready(None)
     }
 }
 

@@ -7,14 +7,47 @@ use js_sys::*;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use utils_atomics::{flag::{AsyncFlag, AsyncSubscribe}, TakeCell};
 use wasm_bindgen::{__rt::WasmRefCell, prelude::*, closure::WasmClosureFnOnce, JsStatic, JsCast};
-
 use crate::Result;
 
-const UNINIT: u8 = 0;
-const WORKING: u8 = 1;
-const INIT: u8 = 2;
-
 mod sealed { pub trait Sealed {} }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
+#[repr(transparent)]
+pub(crate) struct AssertUnpin<T> (T);
+
+impl<T> AssertUnpin<T> {
+    #[inline]
+    pub fn new (t: T) -> Self where T: Unpin {
+        unsafe { Self::new_unchecked(t) }
+    }
+    
+    #[inline]
+    pub unsafe fn new_unchecked (t: T) -> Self {
+        Self(t)
+    }
+
+    #[inline]
+    pub fn into_inner (self) -> T {
+        self.0
+    }
+}
+
+impl<T> Deref for AssertUnpin<T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for AssertUnpin<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T> Unpin for AssertUnpin<T> {}
 
 struct ChannelInner<T> {
     buffer: VecDeque<T>,
@@ -385,7 +418,7 @@ pub trait TypedArray: sealed::Sealed + AsRef<JsValue> {
 }
 
 /// [`TypedArray`] trait extansion
-pub trait TypedArrayExt: TypedArray + JsCast {
+pub trait TypedArrayExt: TypedArray + JsCast + for<'a> From<&'a [Self::Element]> {
     type Element;
 
     fn bytes_per_element () -> u32;

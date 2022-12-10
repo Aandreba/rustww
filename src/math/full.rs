@@ -345,7 +345,7 @@ impl Debug for Vec2d {
 #[inline]
 fn f32x4_sum (v: v128) -> f32 {
     // v = [ D C | B A ]
-    let mut shuf = i32x4_shuffle::<1, 0, 3, 2>(v, v); // [ C D | A B ]
+    let shuf = i32x4_shuffle::<1, 0, 3, 2>(v, v); // [ C D | A B ]
     let sums = f32x4_add(v, shuf); // sums = [ D+C C+D | B+A A+B ]
     return f32x4_extract_lane::<0>(sums) + f32x4_extract_lane::<2>(sums);
 }
