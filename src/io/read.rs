@@ -4,8 +4,9 @@ use futures::{Future, TryFutureExt, Stream, FutureExt};
 use js_sys::{Uint8Array};
 use wasm_bindgen::{JsCast, JsValue, prelude::{wasm_bindgen}};
 use wasm_bindgen_futures::JsFuture;
+use web_sys::StreamPipeOptions;
 use crate::{Result, utils::{TypedArrayExt, TypedArray}};
-use super::IntoFetchBody;
+use super::{IntoFetchBody, JsWriteStream};
 
 #[wasm_bindgen]
 extern "C" {
@@ -19,8 +20,8 @@ extern "C" {
 
 /// A rustfull wrapper arround a JavaScript [`ReadableStream`](web_sys::ReadableStream)
 pub struct JsReadStream<'a, T> {
-    _stream: web_sys::ReadableStream,
-    reader: Option<web_sys::ReadableStreamDefaultReader>,
+    pub(super) _stream: web_sys::ReadableStream,
+    pub(super) reader: Option<web_sys::ReadableStreamDefaultReader>,
     #[cfg(web_sys_unstable_apis)]
     pub(super) _builder: Option<super::builder::ReadBuilder<'a, T>>,
     _phtm: PhantomData<&'a T>

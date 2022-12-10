@@ -250,7 +250,7 @@ impl<T> AbortController<T> {
 
     /// Sends the abortion signal with the specified reason
     #[inline]
-    pub fn abort (&self, reason: &T) -> Result<()> where T: Serialize {
+    pub fn abort_with (&self, reason: &T) -> Result<()> where T: Serialize {
         let reason = serde_wasm_bindgen::to_value(reason)?;
         self.inner.abort(reason.as_ref());
         Ok(())
@@ -258,7 +258,7 @@ impl<T> AbortController<T> {
 
     /// Sends the abortion signal, casting the specified reason as a [`JsValue`]
     #[inline]
-    pub fn abort_cast (&self, reason: &T) where T: AsRef<JsValue> {
+    pub fn abort_with_cast (&self, reason: &T) where T: AsRef<JsValue> {
         self.inner.abort(reason.as_ref())
     }
 
@@ -272,6 +272,13 @@ impl<T> AbortController<T> {
     #[inline]
     pub fn signal (&self) -> Result<AbortSignal<T>> {
         return AbortSignal::new(self.inner.signal())
+    }
+}
+
+impl AbortController<()> {
+    #[inline]
+    pub fn abort (&self) {
+        web_sys::AbortController::abort(&self.inner)
     }
 }
 

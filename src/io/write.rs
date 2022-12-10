@@ -12,7 +12,7 @@ pub struct JsWriteStream<'a, T> {
     pub(crate) _stream: web_sys::WritableStream,
     #[cfg(web_sys_unstable_apis)]
     pub(super) _builder: Option<super::builder::WriteBuilder<'a, T>>,
-    writer: Option<web_sys::WritableStreamDefaultWriter>,
+    pub(super) writer: Option<web_sys::WritableStreamDefaultWriter>,
     _phtm: PhantomData<&'a T>
 }
 
