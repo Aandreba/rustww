@@ -113,6 +113,9 @@ pub mod time;
 /// Math-related types
 pub mod math;
 
+/// Syncronization-related types
+pub mod sync;
+
 /// Notification API
 pub mod notify;
 
@@ -151,6 +154,8 @@ pub mod prelude {
     pub use crate::task::spawn_local;
     pub use crate::time::{Interval, Timeout, sleep};
 }
+
+flat_mod! { scope }
 
 /// Getter for the `Window` object
 #[inline]

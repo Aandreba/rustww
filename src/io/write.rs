@@ -20,9 +20,32 @@ impl<'a, T: AsRef<JsValue>> JsWriteStream<'a, T> {
     /// Returns a builder for a custom [`JsWriteStream`]
     #[docfg(web_sys_unstable_apis)]
     #[inline]
-    pub fn custom () -> Result<super::builder::WriteBuilder<'a, T>> where T: wasm_bindgen::JsCast {
+    pub fn custom () -> super::builder::WriteBuilder<'a, T> where T: wasm_bindgen::JsCast {
         return super::builder::WriteBuilder::new()
     }
+
+    /*#[docfg(web_sys_unstable_apis)]
+    #[inline]
+    pub fn from_rust_sink<S: 'static + Unpin + futures::AsyncWrite> (w: S) -> Result<Self> {
+        use futures::AsyncWriteExt;
+        let w = std::rc::Rc::new(wasm_bindgen::__rt::WasmRefCell::new(w)); 
+
+        return Self::custom()
+            .write_async(move |chunk: Uint8Array, _con| {
+                let w = w.clone();
+                return async move {
+                    let mut w = w.borrow_mut();
+                    for i in 0..chunk.length() {
+                        let byte = chunk.get_index(i);
+                        if let Err(e) = w.write_all(&[byte]).await {
+                            return Err(JsValue::from_str(&e.to_string()));
+                        }
+                    }
+                    return Ok(())
+                }
+            })
+            .build();
+    }*/
 
     /// Creates a new [`JsWriteStream`]
     #[inline]
@@ -83,18 +106,16 @@ impl<'a, T: AsRef<JsValue>> JsWriteStream<'a, T> {
 impl<'a> JsWriteStream<'a, Uint8Array> {
     #[docfg(web_sys_unstable_apis)]
     #[inline]
-    pub fn from_rust_write<W: 'static + Unpin + futures::AsyncWrite> (w: W) -> Result<Self> {
+    pub fn from_rust_write<W: Unpin + futures::AsyncWrite> (w: &'a crate::sync::Mutex<W>) -> Result<Self> {
         use futures::AsyncWriteExt;
-        let w = std::rc::Rc::new(wasm_bindgen::__rt::WasmRefCell::new(w)); 
 
-        return Self::custom()?
+        return Self::custom()
             .write_async(move |chunk: Uint8Array, _con| {
-                let w = w.clone();
                 return async move {
-                    let mut w = w.borrow_mut();
+                    let mut w = w.lock().await;
                     for i in 0..chunk.length() {
                         let byte = chunk.get_index(i);
-                        if let Err(e) = w.write_all(&[byte]).await {
+                        if let Err(e) = w.write_all(core::slice::from_ref(&byte)).await {
                             return Err(JsValue::from_str(&e.to_string()));
                         }
                     }

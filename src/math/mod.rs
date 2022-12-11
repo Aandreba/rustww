@@ -1,12 +1,13 @@
-use core::ops::*;
-use rand::{distributions::*, prelude::*};
-
+#[allow(unused)]
 macro_rules! impl_scalar_vec {
     (
         $(
             $v:vis struct $name:ident: ($($vname:ident),+) => [$ty:ty; $len:literal]
         ),+
     ) => {
+        use core::ops::*;
+        use rand::{distributions::*, prelude::*};
+
         $(
             #[doc = concat!("Euclidian vector of ", stringify!($len), " `", stringify!($ty), "` values")]
             #[derive(Debug, Clone, Copy, PartialEq, Default)]

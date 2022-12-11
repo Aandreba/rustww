@@ -69,7 +69,7 @@ impl<'a, T: JsCast> JsReadStream<'a, T> {
     /// Returns a builder for a custom [`JsReadStream`]
     #[docfg(web_sys_unstable_apis)]
     #[inline]
-    pub fn custom () -> Result<super::builder::ReadBuilder<'a, T>> {
+    pub fn custom () -> super::builder::ReadBuilder<'a, T> {
         return super::builder::ReadBuilder::new()
     }
 

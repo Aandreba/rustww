@@ -215,7 +215,23 @@ pub fn sleep_promise (dur: Duration) -> Promise {
             }
         }
 
-        match web_sys::window().unwrap().set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, millis as i32) {
+        let global = js_sys::global();
+        let timeout = match global.dyn_into::<web_sys::Window>() {
+            Ok(window) => window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, millis as i32),
+            Err(global) => match global.dyn_into::<web_sys::WorkerGlobalScope>() {
+                Ok(worker) => worker.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, millis as i32),
+                Err(e) => match reject.call1(&JsValue::UNDEFINED, &e) {
+                    Ok(_) => return,
+                    Err(e) => {
+                        drop(resolve);
+                        drop(reject);
+                        wasm_bindgen::throw_val(e);
+                    }
+                }
+            } 
+        };
+
+        match timeout {
             Ok(_) => {},
             Err(e) => match reject.call1(&JsValue::UNDEFINED, &e) {
                 Ok(_) => {},
