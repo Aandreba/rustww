@@ -77,9 +77,7 @@ impl Notification {
                     Delay::Date(date) => (date - chrono::Utc::now()).to_std().unwrap()
                 };
 
-                if let Err(e) = crate::time::sleep(delay).await {
-                    wasm_bindgen::throw_val(e)
-                }
+                crate::time::sleep(delay).await
             }
         }
 

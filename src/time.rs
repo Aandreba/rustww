@@ -1,8 +1,9 @@
 use std::{time::Duration, intrinsics::unlikely, fmt::Debug, mem::ManuallyDrop, marker::PhantomData};
 use futures::{Stream, StreamExt, Future, FutureExt};
 use js_sys::{Promise, Function};
-use wasm_bindgen::{JsValue, prelude::Closure, JsCast, closure::WasmClosureFnOnce};
-use crate::{Result, window, utils::{LocalReceiver, local_channel, ShotReceiver, one_shot}};
+use wasm_bindgen::{JsValue, prelude::Closure, JsCast, closure::WasmClosureFnOnce, UnwrapThrowExt};
+use crate::{Result, utils::{LocalReceiver, local_channel, ShotReceiver, one_shot}};
+use crate::scope::*;
 
 const MAX_MILLIS: u128 = i32::MAX as u128;
 
@@ -53,7 +54,7 @@ impl<'a, T: 'a> Interval<'a, T> {
         let handler = closure.as_ref();
         debug_assert!(handler.is_instance_of::<Function>());
     
-        let id = window()?.set_interval_with_callback_and_timeout_and_arguments_0(handler.unchecked_ref(), millis as i32)?;
+        let id = set_interval(handler.unchecked_ref(), millis as i32)?;
         return Ok(Self {
             id,
             recv,
@@ -102,7 +103,7 @@ impl<T> Debug for Interval<'_, T> {
 impl<T> Drop for Interval<'_, T> {
     #[inline]
     fn drop (&mut self) {
-        window().unwrap().clear_interval_with_handle(self.id);
+        clear_interval(self.id);
     }
 }
 
@@ -150,7 +151,7 @@ impl<'a, T: 'a> Timeout<'a, T> {
         let function = closure.as_ref();
         debug_assert!(function.is_instance_of::<Function>());
 
-        let id = window()?.set_timeout_with_callback_and_timeout_and_arguments_0(function.unchecked_ref(), millis as i32)?;
+        let id = set_timeout(function.unchecked_ref(), millis as i32)?;
         return Ok(Self {
             id,
             recv,
@@ -190,14 +191,16 @@ impl<T> Future for Timeout<'_, T> {
 impl<T> Drop for Timeout<'_, T> {
     #[inline]
     fn drop(&mut self) {
-        window().unwrap().clear_timeout_with_handle(self.id);
+        clear_timeout(self.id);
     }
 }
 
 /// Returns a [`Future`] that resolves after a specified delay.
 #[inline]
-pub async fn sleep (dur: Duration) -> Result<()> {
-    return wasm_bindgen_futures::JsFuture::from(sleep_promise(dur)).await.map(|_| ())
+pub async fn sleep (dur: Duration) {
+    let _ = wasm_bindgen_futures::JsFuture::from(sleep_promise(dur))
+        .await
+        .unwrap_throw();
 }
 
 pub fn sleep_promise (dur: Duration) -> Promise {
@@ -215,23 +218,7 @@ pub fn sleep_promise (dur: Duration) -> Promise {
             }
         }
 
-        let global = js_sys::global();
-        let timeout = match global.dyn_into::<web_sys::Window>() {
-            Ok(window) => window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, millis as i32),
-            Err(global) => match global.dyn_into::<web_sys::WorkerGlobalScope>() {
-                Ok(worker) => worker.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, millis as i32),
-                Err(e) => match reject.call1(&JsValue::UNDEFINED, &e) {
-                    Ok(_) => return,
-                    Err(e) => {
-                        drop(resolve);
-                        drop(reject);
-                        wasm_bindgen::throw_val(e);
-                    }
-                }
-            } 
-        };
-
-        match timeout {
+        match set_timeout(&resolve, millis as i32) {
             Ok(_) => {},
             Err(e) => match reject.call1(&JsValue::UNDEFINED, &e) {
                 Ok(_) => {},

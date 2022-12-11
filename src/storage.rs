@@ -1,6 +1,6 @@
 use serde::{Serialize, de::DeserializeOwned};
 use wasm_bindgen::JsValue;
-use crate::{Result, window};
+use crate::{Result, scope::window};
 
 /// Interface that provides access to a particular domain's session or local storage.
 /// 

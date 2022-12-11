@@ -1,7 +1,7 @@
 use std::{task::{Poll}, future::Future};
 use futures::{Stream, TryFutureExt};
 use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsCast, JsValue};
-use crate::{Result, utils::{ShotReceiver, one_shot, LocalReceiver, local_channel}, window};
+use crate::{Result, utils::{ShotReceiver, one_shot, LocalReceiver, local_channel}, scope::window};
 use futures::StreamExt;
 
 #[wasm_bindgen]

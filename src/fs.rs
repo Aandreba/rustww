@@ -4,7 +4,7 @@ use js_sys::{Array, Uint8Array};
 use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Window, HtmlInputElement};
-use crate::{Result, window, io::{JsReadStream, JsWriteStream}};
+use crate::{Result, io::{JsReadStream, JsWriteStream}};
 
 type JsFile = web_sys::File;
 
@@ -65,7 +65,7 @@ impl File {
     /// # Compatibility
     /// Check the [compatibility table](https://developer.mozilla.org/en-US/docs/Web/API/window/showOpenFilePicker#browser_compatibility)
     pub async fn from_picker () -> Result<impl Iterator<Item = File>> {
-        let picker = JsFuture::from(show_open_file_picker(&window()?)).await?;
+        let picker = JsFuture::from(show_open_file_picker(&crate::scope::window()?)).await?;
         let array = picker.unchecked_into::<Array>();
 
         let iter = (0..array.length()).into_iter()

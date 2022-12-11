@@ -102,7 +102,8 @@ use wasm_bindgen::prelude::wasm_bindgen;
 /// Web Worker threads (from the [`wasm_thread`](https://github.com/chemicstry/wasm_thread) crate).
 #[docfg::docfg(target_feature = "atomics")]
 pub use wasm_thread as thread;
-use web_sys::Window;
+
+pub mod scope;
 
 /// Task-related functionality
 pub mod task;
@@ -142,7 +143,7 @@ pub mod utils;
 
 /// Prelude
 pub mod prelude {
-    pub use crate::{Result, window, log, println};
+    pub use crate::{Result, log, println};
     pub use crate::io::{JsReadStream, JsWriteStream};
     pub use crate::math::*;
     pub use crate::battery::{Battery, Snapshot, BatteryTime};
@@ -153,12 +154,4 @@ pub mod prelude {
     pub use crate::storage::{Storage};
     pub use crate::task::spawn_local;
     pub use crate::time::{Interval, Timeout, sleep};
-}
-
-flat_mod! { scope }
-
-/// Getter for the `Window` object
-#[inline]
-pub fn window () -> Result<Window> {
-    return ::web_sys::window().ok_or_else(|| wasm_bindgen::JsValue::from_str("window not found"));
 }

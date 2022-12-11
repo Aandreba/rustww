@@ -2,7 +2,7 @@ use std::{task::{Poll}};
 use futures::{Stream, StreamExt};
 use wasm_bindgen::{prelude::Closure};
 use web_sys::{DeviceOrientationEvent, DeviceMotionEvent, DeviceAcceleration, DeviceRotationRate};
-use crate::{Result, utils::{one_shot, LocalReceiver, local_channel}, math::Vec3d, window};
+use crate::{Result, utils::{one_shot, LocalReceiver, local_channel}, math::Vec3d, scope::GLOBAL_SCOPE};
 use wasm_bindgen::JsCast;
 
 /// Three angles that represent rotation in three dimensions
@@ -121,8 +121,10 @@ impl Drop for OrientationWatcher {
             }
         }
 
-        let win = window().unwrap();
-        win.remove_event_listener_with_callback_and_bool("deviceorientation", listener, true).unwrap();
+
+        GLOBAL_SCOPE.with(|scope| 
+            scope.remove_event_listener_with_callback_and_bool("deviceorientation", listener, true)
+        ).unwrap();
     }
 }
 

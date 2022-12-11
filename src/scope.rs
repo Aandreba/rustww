@@ -1,50 +1,110 @@
-use elor::Either;
+use js_sys::Function;
 use wasm_bindgen::JsCast;
-use web_sys::{WorkerGlobalScope, Window};
+use web_sys::{WorkerGlobalScope, Window, EventTarget};
 use crate::Result;
+use wasm_bindgen::prelude::*;
 
 thread_local! {
-    static LOCAL_SCOPE: Either<Window, WorkerGlobalScope> = {
-        match js_sys::global().dyn_into::<Window>() {
-            Ok(window) => Either::Left(window),
-            Err(global) => match global.dyn_into::<WorkerGlobalScope>() {
-                Ok(worker) => Either::Right(worker),
-                Err(e) => wasm_bindgen::throw_val(e.into())
-            }
-        }
+    /// Returns the current global scope
+    pub static GLOBAL_SCOPE: Scope = {
+        let global = js_sys::global();
+        assert!(global.is_instance_of::<Window>() || global.is_instance_of::<WorkerGlobalScope>());
+        global.unchecked_into()
+    };
+}
+
+#[inline]
+pub fn atob (s: &str) -> Result<String> {
+    return GLOBAL_SCOPE.with(|scope| scope.atob(s))
+}
+
+#[inline]
+pub fn btoa (s: &str) -> Result<String> {
+    return GLOBAL_SCOPE.with(|scope| scope.btoa(s))
+}
+
+#[inline]
+pub fn set_interval(fun: &Function, millis: i32) -> Result<i32> {
+    return GLOBAL_SCOPE.with(|scope| scope.set_interval(fun, millis))
+}
+
+#[inline]
+pub fn clear_interval(handle: i32) {
+    return GLOBAL_SCOPE.with(|scope| scope.clear_interval(handle))
+}
+
+#[inline]
+pub fn set_timeout(fun: &Function, millis: i32) -> Result<i32> {
+    return GLOBAL_SCOPE.with(|scope| scope.set_timeout(fun, millis))
+}
+
+#[inline]
+pub fn clear_timeout(handle: i32) {
+    return GLOBAL_SCOPE.with(|scope| scope.clear_timeout(handle))
+}
+
+#[inline]
+pub fn add_global_listener (ty: &str, f: &Function) -> Result<()> {
+    return GLOBAL_SCOPE.with(|scope| scope.add_event_listener_with_callback(ty, f))
+}
+
+#[inline]
+pub fn remove_global_listener (ty: &str, f: &Function) -> Result<()> {
+    return GLOBAL_SCOPE.with(|scope| scope.remove_event_listener_with_callback(ty, f))
+}
+
+#[wasm_bindgen]
+extern "C" {
+    /// Represents a JavaScript global scope
+    #[derive(Debug, Clone)]
+    #[wasm_bindgen(extends = EventTarget)]
+    pub type Scope;
+
+    #[wasm_bindgen(structural, method, catch)]
+    pub fn atob (this: &Scope, s: &str) -> Result<String>;
+    #[wasm_bindgen(structural, method, catch)]
+    pub fn btoa (this: &Scope, s: &str) -> Result<String>;
+
+    #[wasm_bindgen(js_name = setInterval, structural, method, catch)]
+    pub fn set_interval(this: &Scope, fun: &Function, millis: i32) -> Result<i32>;
+    #[wasm_bindgen(js_name = clearInterval, structural, method)]
+    pub fn clear_interval(this: &Scope, handle: i32);
+
+    #[wasm_bindgen(js_name = setTimeout, structural, method, catch)]
+    pub fn set_timeout(this: &Scope, fun: &Function, millis: i32) -> Result<i32>;
+    #[wasm_bindgen(js_name = clearTimeout, structural, method)]
+    pub fn clear_timeout(this: &Scope, handle: i32);
+
+    #[wasm_bindgen(structural, method)]
+    pub fn navigator (this: &Scope) -> Navigator;
+}
+
+#[wasm_bindgen]
+extern "C" {
+    /// Represents a JavaScript global scope's navigator
+    #[derive(Debug, Clone)]
+    pub type Navigator;
+
+    #[wasm_bindgen(structural, method, catch)]
+    pub fn app_code_name(this: &Navigator) -> Result<String>;
+    #[wasm_bindgen(structural, method)]
+    pub fn app_name(this: &Navigator) -> String;
+    #[wasm_bindgen(structural, method, catch)]
+    pub fn app_version(this: &Navigator) -> Result<String>;
+    
+    
+    // #[wasm_bindgen(structural, method, catch)]
+    // pub fn connection(this: &Navigator) -> Result<NetworkInformation>;
+}
+
+impl Default for Scope {
+    #[inline]
+    fn default() -> Self {
+        return GLOBAL_SCOPE.with(Clone::clone)
     }
 }
 
-macro_rules! impl_global {
-    ($(
-        $( #[$meta:meta] )*
-        fn $name:ident ( $( $arg_name:ident : $arg_ty:ty ),* $(,)? ) $(-> $($ret:tt)+)?
-    );+) => {
-        $(
-            pub fn $name ($($arg_name: $arg_ty),+) -> Result<$()?> {
-                return LOCAL_SCOPE.with(|scope| todo!())
-            }    
-        )+
-    };
-
-    (@ret) => { Result<()> };
-    (@ret Result<$ret:ty>) => { Result<$ret> };
-    (@ret $ret:ty) => { Result<$ret> }
-}
-
-/// Returns the current local scope
-pub fn scope () -> Either<Window, WorkerGlobalScope> {
-    return LOCAL_SCOPE.with(Clone::clone)
-}
-
-/// Getter for the `Window` object
 #[inline]
 pub fn window () -> Result<Window> {
-    return js_sys::global().dyn_into::<Window>().map_err(Into::into);
-}
-
-/// Getter for the `WorkerGlobalScope` object
-#[inline]
-pub fn worker_scope () -> Result<WorkerGlobalScope> {
-    return js_sys::global().dyn_into::<WorkerGlobalScope>().map_err(Into::into);
+    return js_sys::global().dyn_into().map_err(|_| JsValue::from_str("current global scope isn't a window. you may be in a web worker."));
 }
