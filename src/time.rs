@@ -2,7 +2,8 @@ use std::{time::Duration, intrinsics::unlikely, fmt::Debug, mem::ManuallyDrop, m
 use futures::{Stream, StreamExt, Future, FutureExt};
 use js_sys::{Promise, Function};
 use wasm_bindgen::{JsValue, prelude::Closure, JsCast, closure::WasmClosureFnOnce, UnwrapThrowExt};
-use crate::{Result, utils::{LocalReceiver, local_channel, ShotReceiver, one_shot}};
+use wasm_bindgen_futures::spawn_local;
+use crate::{Result, utils::{LocalReceiver, local_channel, ShotReceiver, one_shot}, sync::{DropHandle, drop_local, drop_local_with}};
 use crate::scope::*;
 
 const MAX_MILLIS: u128 = i32::MAX as u128;
@@ -115,97 +116,190 @@ pub fn spawn_interval<T: 'static, F: 'static + FnMut() -> T> (timeout: Duration,
     return Ok(recv)
 }
 
-/// An owned handler of a timeout.
-/// 
-/// A timeout is a closure that is executed only once, after a specified delay, without blocking.
-/// 
-/// Timeout handlers contain the data related to their closure, and when dropped will clear the timeout 
-/// and release any memory relating to their closure.
-/// 
-/// They also receive the return value of the closure, so they can be used as a Rust [`Future`]
-pub struct Timeout<'a, T> {
-    id: i32,
-    recv: ShotReceiver<T>,
-    _closure: Closure<dyn FnMut()>,
-    _phtm: PhantomData<&'a mut &'a dyn FnMut()>
-}
-
-impl<'a, T: 'a> Timeout<'a, T> {
-    /// Creates a new timout, returning it's handle
-    pub fn new<F: 'a + FnOnce() -> T> (timeout: Duration, f: F) -> Result<Self> {
-        let millis = timeout.as_millis();
-        if unlikely(millis > MAX_MILLIS) {
-            return Err(JsValue::from_str("timeout overflow"))
+cfg_if::cfg_if! {
+    if #[cfg(target_feature = "atomics")] {
+        /// An owned handler of a timeout.
+        /// 
+        /// A timeout is a closure that is executed only once, after a specified delay, without blocking.
+        /// 
+        /// Timeout handlers contain the data related to their closure, and when dropped will clear the timeout 
+        /// and release any memory relating to their closure.
+        /// 
+        /// They also receive the return value of the closure, so they can be used as a Rust [`Future`]
+        pub struct Timeout<'a, T> {
+            id: i32,
+            recv: ShotReceiver<T>,
+            _closure: DropHandle,
+            _phtm: PhantomData<&'a mut &'a dyn FnMut()>
         }
 
-        let (send, recv) = one_shot();
-        let f = move || {
-            let _ = send.try_send(f());
-        };
+        impl<'a, T: 'a> Timeout<'a, T> {
+            /// Creates a new timout, returning it's handle
+            pub fn new<F: 'a + FnOnce() -> T> (timeout: Duration, f: F) -> Result<Self> {
+                let millis = timeout.as_millis();
+                if unlikely(millis > MAX_MILLIS) {
+                    return Err(JsValue::from_str("timeout overflow"))
+                }
 
-        let f = unsafe {
-            core::mem::transmute::<Box<dyn 'a + FnOnce()>, Box<dyn 'static + FnOnce()>>(Box::new(f))
-        };
+                let (send, recv) = one_shot();
+                let f = move || send.send(f());
 
-        let closure = Closure::wrap(f.into_fn_mut());
-        let function = closure.as_ref();
-        debug_assert!(function.is_instance_of::<Function>());
+                let f = unsafe {
+                    core::mem::transmute::<Box<dyn 'a + FnOnce()>, Box<dyn 'static + FnOnce()>>(Box::new(f))
+                };
 
-        let id = set_timeout(function.unchecked_ref(), millis as i32)?;
-        return Ok(Self {
-            id,
-            recv,
-            _closure: closure,
-            _phtm: PhantomData
-        })
+                let closure = Closure::wrap(f.into_fn_mut());
+                let function = closure.as_ref();
+                debug_assert!(function.is_instance_of::<Function>());
+
+                let id = set_timeout(function.unchecked_ref(), millis as i32)?;
+                return Ok(Self {
+                    id,
+                    recv,
+                    _closure: closure,
+                    _phtm: PhantomData
+                })
+            }
+        }
+    } else {
+        /// An owned handler of a timeout.
+        /// 
+        /// A timeout is a closure that is executed only once, after a specified delay, without blocking.
+        /// 
+        /// Timeout handlers contain the data related to their closure, and when dropped will clear the timeout 
+        /// and release any memory relating to their closure.
+        /// 
+        /// They also receive the return value of the closure, so they can be used as a Rust [`Future`]
+        pub struct Timeout<'a, T> {
+            id: i32,
+            recv: ShotReceiver<T>,
+            _closure: Closure<dyn FnMut()>,
+            _phtm: PhantomData<&'a mut &'a dyn FnMut()>
+        }
+
+        impl<'a, T: 'a> Timeout<'a, T> {
+            /// Creates a new timout, returning it's handle
+            pub fn new<F: 'a + FnOnce() -> T> (timeout: Duration, f: F) -> Result<Self> {
+                let millis = timeout.as_millis();
+                if unlikely(millis > MAX_MILLIS) {
+                    return Err(JsValue::from_str("timeout overflow"))
+                }
+
+                let (send, recv) = one_shot();
+                let f = move || send.send(f());
+
+                let f = unsafe {
+                    core::mem::transmute::<Box<dyn 'a + FnOnce()>, Box<dyn 'static + FnOnce()>>(Box::new(f))
+                };
+
+                let closure = Closure::wrap(f.into_fn_mut());
+                let function = closure.as_ref();
+                debug_assert!(function.is_instance_of::<Function>());
+
+                let id = set_timeout(function.unchecked_ref(), millis as i32)?;
+                return Ok(Self {
+                    id,
+                    recv,
+                    _closure: closure,
+                    _phtm: PhantomData
+                })
+            }
+        }
+
+        impl<T> Timeout<'_, T> {
+            /// Returns the id of the timeout
+            #[inline]
+            pub fn id (&self) -> i32 {
+                return self.id
+            }
+        }
+
+        impl<T> Timeout<'static, T> {
+            /// Returns a future that resolves when the timeout executes.
+            /// Unlike [`Timeout`], this future will not clear the interval when droped.
+            #[inline]
+            pub fn leak (this: Self) -> ShotReceiver<T> {
+                let this = ManuallyDrop::new(this);
+                return unsafe { core::ptr::read(&this.recv) }
+            }
+        }
+
+        impl<T> Future for Timeout<'_, T> {
+            type Output = T;
+
+            #[inline]
+            fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+                self.recv.poll_unpin(cx)
+            }
+        }
+
+        impl<T> Drop for Timeout<'_, T> {
+            #[inline]
+            fn drop(&mut self) {
+                clear_timeout(self.id);
+            }
+        }
     }
 }
 
-impl<T> Timeout<'_, T> {
-    /// Returns the id of the timeout
-    #[inline]
-    pub fn id (&self) -> i32 {
-        return self.id
+cfg_if::cfg_if! {
+    if #[cfg(target_feature = "atomics")] {
+        /// Returns a [`Future`] that resolves after a specified delay.
+        #[inline]
+        pub fn sleep (dur: Duration) -> Result<Sleep> {
+            let (flag, inner) = utils_atomics::flag::mpmc::async_flag();
+            let timeout = Timeout::new(dur, move || flag.mark())?;
+            drop_local_with(timeout, inner.clone());
+
+            return Ok(Sleep {
+                inner
+            })
+        }
+
+        pub struct Sleep {
+            inner: utils_atomics::flag::mpmc::AsyncSubscribe
+        }
+
+        impl Future for Sleep {
+            type Output = ();
+
+            #[inline]
+            fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+                self.inner.poll_unpin(cx)
+            }
+        }
+    } else {
+        /// Returns a [`Future`] that resolves after a specified delay.
+        #[inline]
+        pub fn sleep (dur: Duration) -> Result<Sleep> {
+            let timeout = Timeout::new(dur, Default::default)?;
+
+            return Ok(Sleep {
+                inner
+            })
+        }
+
+        pub struct Sleep {
+            timeout: Timeout<'static, ()>
+        }
+
+        impl Future for Sleep {
+            type Output = ();
+
+            #[inline]
+            fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+                self.inner.poll_unpin(cx)
+            }
+        }
     }
 }
 
-impl<T> Timeout<'static, T> {
-    /// Returns a future that resolves when the timeout executes.
-    /// Unlike [`Timeout`], this future will not clear the interval when droped.
-    #[inline]
-    pub fn leak (this: Self) -> ShotReceiver<T> {
-        let this = ManuallyDrop::new(this);
-        return unsafe { core::ptr::read(&this.recv) }
-    }
-}
-
-impl<T> Future for Timeout<'_, T> {
-    type Output = T;
-
-    #[inline]
-    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
-        self.recv.poll_unpin(cx)
-    }
-}
-
-impl<T> Drop for Timeout<'_, T> {
-    #[inline]
-    fn drop(&mut self) {
-        clear_timeout(self.id);
-    }
-}
-
+/*
 /// Returns a [`Future`] that resolves after a specified delay.
+#[cfg(not(target_feature = "atomics"))]
 #[inline]
 pub async fn sleep (dur: Duration) {
-    let _ = wasm_bindgen_futures::JsFuture::from(sleep_promise(dur))
-        .await
-        .unwrap_throw();
-}
-
-pub fn sleep_promise (dur: Duration) -> Promise {
     let millis = dur.as_millis();
-
     let mut f = |resolve: Function, reject: Function| {
         if unlikely(millis > MAX_MILLIS) {
             match reject.call1(&JsValue::UNDEFINED, &JsValue::from_str("Duration overflow")) {
@@ -231,5 +325,9 @@ pub fn sleep_promise (dur: Duration) -> Promise {
         }
     };
 
-    return Promise::new(&mut f);
+    let promise = Promise::new(&mut f);
+    let _ = wasm_bindgen_futures::JsFuture::from(promise)
+        .await
+        .unwrap_throw();
 }
+*/

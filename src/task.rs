@@ -1,4 +1,4 @@
-use futures::Future;
+use futures::{Future};
 pub use wasm_bindgen_futures::spawn_local;
 use js_sys::*;
 use crate::{utils::{AbortSignal, AbortController}, Result};
