@@ -4,7 +4,7 @@ use serde::{de::DeserializeOwned};
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen, JsCast};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{RequestInit, RequestCache, RequestCredentials, Headers, RequestMode, RequestRedirect, ReferrerPolicy};
-use crate::{Result, window, utils::AbortController};
+use crate::{Result, utils::{AbortController, AbortSignal}, scope::fetch};
 use super::{JsReadStream};
 
 macro_rules! impl_ident {
@@ -219,7 +219,19 @@ impl Request {
     /// Assigns `con` as the abort controller of the request
     #[inline]
     pub fn abortable_with<T> (&mut self, con: &AbortController<T>) -> &mut Self {
-        self.inner.signal(Some(&con.raw_signal()));
+        self.abortable_with_raw(&con.raw_signal())
+    }
+
+    /// Assigns `signal` as the signal to abort the request
+    #[inline]
+    pub fn abortable_with_signal<T> (&mut self, signal: &AbortSignal<T>) -> &mut Self {
+        self.abortable_with_raw(signal.as_ref())
+    }
+
+    /// Assigns `signal` as the signal to abort the request
+    #[inline]
+    pub fn abortable_with_raw (&mut self, signal: &web_sys::AbortSignal) -> &mut Self {
+        self.inner.signal(Some(signal));
         self
     }
 
@@ -231,7 +243,7 @@ impl Request {
         }
 
         let req = web_sys::Request::new_with_str_and_init(url, &self.inner)?;
-        let fetch = JsFuture::from(window()?.fetch_with_request(&req)).await?;
+        let fetch = JsFuture::from(fetch(&req)).await?;
         debug_assert!(fetch.is_instance_of::<web_sys::Response>());
 
         return Ok(Response {

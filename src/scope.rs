@@ -14,16 +14,6 @@ thread_local! {
 }
 
 #[inline]
-pub fn atob (s: &str) -> Result<String> {
-    return GLOBAL_SCOPE.with(|scope| scope.atob(s))
-}
-
-#[inline]
-pub fn btoa (s: &str) -> Result<String> {
-    return GLOBAL_SCOPE.with(|scope| scope.btoa(s))
-}
-
-#[inline]
 pub fn set_interval(fun: &Function, millis: i32) -> Result<i32> {
     return GLOBAL_SCOPE.with(|scope| scope.set_interval(fun, millis))
 }
@@ -44,6 +34,11 @@ pub fn clear_timeout(handle: i32) {
 }
 
 #[inline]
+pub fn fetch (req: &web_sys::Request) -> js_sys::Promise {
+    return GLOBAL_SCOPE.with(|scope| scope.fetch(req))
+}
+
+#[inline]
 pub fn add_global_listener (ty: &str, f: &Function) -> Result<()> {
     return GLOBAL_SCOPE.with(|scope| scope.add_event_listener_with_callback(ty, f))
 }
@@ -60,11 +55,6 @@ extern "C" {
     #[wasm_bindgen(extends = EventTarget)]
     pub type Scope;
 
-    #[wasm_bindgen(structural, method, catch)]
-    pub fn atob (this: &Scope, s: &str) -> Result<String>;
-    #[wasm_bindgen(structural, method, catch)]
-    pub fn btoa (this: &Scope, s: &str) -> Result<String>;
-
     #[wasm_bindgen(js_name = setInterval, structural, method, catch)]
     pub fn set_interval(this: &Scope, fun: &Function, millis: i32) -> Result<i32>;
     #[wasm_bindgen(js_name = clearInterval, structural, method)]
@@ -76,25 +66,7 @@ extern "C" {
     pub fn clear_timeout(this: &Scope, handle: i32);
 
     #[wasm_bindgen(structural, method)]
-    pub fn navigator (this: &Scope) -> Navigator;
-}
-
-#[wasm_bindgen]
-extern "C" {
-    /// Represents a JavaScript global scope's navigator
-    #[derive(Debug, Clone)]
-    pub type Navigator;
-
-    #[wasm_bindgen(structural, method, catch)]
-    pub fn app_code_name(this: &Navigator) -> Result<String>;
-    #[wasm_bindgen(structural, method)]
-    pub fn app_name(this: &Navigator) -> String;
-    #[wasm_bindgen(structural, method, catch)]
-    pub fn app_version(this: &Navigator) -> Result<String>;
-    
-    
-    // #[wasm_bindgen(structural, method, catch)]
-    // pub fn connection(this: &Navigator) -> Result<NetworkInformation>;
+    pub fn fetch (this: &Scope, req: &web_sys::Request) -> js_sys::Promise;
 }
 
 impl Default for Scope {
