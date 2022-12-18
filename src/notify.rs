@@ -70,15 +70,16 @@ impl Notification {
     /// # Panics
     /// The spawned future will panic if the user doesn't grant permission to show notifications.
     pub fn spawn (self) {
-        async fn wait_delay (delay: Option<Delay>) {
+        async fn wait_delay (delay: Option<Delay>) -> Result<()> {
             if let Some(delay) = delay {
                 let delay = match delay {
                     Delay::Duration(dur) => dur,
                     Delay::Date(date) => (date - chrono::Utc::now()).to_std().unwrap()
                 };
-
-                crate::time::sleep(delay).await
+                crate::time::sleep(delay)?.await
             }
+            
+            return Ok(())
         }
 
         wasm_bindgen_futures::spawn_local(async move {

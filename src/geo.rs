@@ -1,7 +1,7 @@
 use std::{task::{Poll}, future::Future};
-use futures::{Stream, TryFutureExt};
-use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsCast, JsValue};
-use crate::{Result, utils::{ShotReceiver, one_shot, LocalReceiver, local_channel}, scope::window};
+use futures::{Stream, FutureExt};
+use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsCast};
+use crate::{Result, utils::{LocalReceiver, local_channel}, scope::window, sync::{one_shot, ShotReceiver}};
 use futures::StreamExt;
 
 #[wasm_bindgen]
@@ -54,34 +54,23 @@ impl Geolocation {
     /// Returns a [`Future`] that resolves to the current geolocation of the device
     pub fn current () -> Result<CurrentGeolocation> {
         let (send, inner) = one_shot();
-
-        let my_result = send.clone();
         let resolve_closure = Closure::once(move |loc: GeolocationPosition| {
-            let _ = my_result.try_send(Ok(loc));
-        });
-
-        let my_result = send.clone();
-        let reject_closure = Closure::once(move |err: JsValue| {
-            let _ = my_result.try_send(Err(err));
+            let _ = send.try_send(loc);
         });
 
         let resolve: &js_sys::Function;
-        let reject: &js_sys::Function;
         cfg_if::cfg_if! {
             if #[cfg(debug_assertions)] {
                 resolve = resolve_closure.as_ref().dyn_ref().unwrap();
-                reject = reject_closure.as_ref().dyn_ref().unwrap();
             } else {
                 resolve = resolve_closure.as_ref().unchecked_ref();
-                reject = reject_closure.as_ref().unchecked_ref();
             }
         }
 
         let geo = window()?.navigator().geolocation()?;
-        match geo.get_current_position_with_error_callback(resolve, Some(reject)) {
+        match geo.get_current_position(resolve) {
             Ok(_) => {
                 resolve_closure.forget();
-                reject_closure.forget();
             },
             Err(e) => return Err(e)
         }
@@ -190,17 +179,18 @@ impl From<GeolocationPosition> for Geolocation {
 
 /// Future for [`current`](Geolocation::current)
 pub struct CurrentGeolocation {
-    inner: ShotReceiver<Result<GeolocationPosition>>
+    inner: ShotReceiver<GeolocationPosition>
 }
 
 impl Future for CurrentGeolocation {
-    type Output = Result<Geolocation>;
+    type Output = Geolocation;
 
     #[inline]
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
-        if let Poll::Ready(x) = self.inner.try_poll_unpin(cx)? {
-            return Poll::Ready(Ok(Geolocation::from(x)))
+        return match self.inner.poll_unpin(cx) {
+            Poll::Ready(Some(x)) => Poll::Ready(Geolocation::from(x)),
+            Poll::Ready(None) => unreachable!(),
+            Poll::Pending => Poll::Pending
         }
-        return Poll::Pending
     }
 }

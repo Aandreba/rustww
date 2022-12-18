@@ -1,8 +1,8 @@
 use std::{task::{Poll}};
 use futures::{Stream, StreamExt};
-use wasm_bindgen::{prelude::Closure};
+use wasm_bindgen::{prelude::Closure, JsValue};
 use web_sys::{DeviceOrientationEvent, DeviceMotionEvent, DeviceAcceleration, DeviceRotationRate};
-use crate::{Result, utils::{one_shot, LocalReceiver, local_channel}, math::Vec3d, scope::GLOBAL_SCOPE};
+use crate::{Result, utils::{LocalReceiver, local_channel}, math::Vec3d, scope::GLOBAL_SCOPE, sync::one_shot};
 use wasm_bindgen::JsCast;
 
 /// Three angles that represent rotation in three dimensions
@@ -54,7 +54,7 @@ impl Orientation {
         win.add_event_listener_with_callback_and_bool("deviceorientation", listener, true)?;
         let result = result.await;
         win.remove_event_listener_with_callback_and_bool("deviceorientation", listener, true)?;
-        return Ok(result);
+        return result.ok_or_else(|| JsValue::from_str("Error obtaining current orientation"));
     }
 
     /// Returns a watcher over the device's rotation
@@ -167,8 +167,7 @@ impl Motion {
         win.add_event_listener_with_callback_and_bool("devicemotion", listener, true)?;
         let result = result.await;
         win.remove_event_listener_with_callback_and_bool("devicemotion", listener, true)?;
-
-        return Ok(result);
+        return result.ok_or_else(|| JsValue::from_str("Error obtaining current motion"));
     }
 
     /// Returns a watcher over the device's motion

@@ -65,6 +65,9 @@ extern "C" {
     #[wasm_bindgen(js_name = clearTimeout, structural, method)]
     pub fn clear_timeout(this: &Scope, handle: i32);
 
+    #[cfg(target_feature = "atomics")]
+    #[wasm_bindgen(structural, method, catch)]
+    pub fn scheduler (this: &Scope) -> Result<crate::runtime::web::Scheduler>;
     #[wasm_bindgen(structural, method)]
     pub fn fetch (this: &Scope, req: &web_sys::Request) -> js_sys::Promise;
 }

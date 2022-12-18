@@ -1,4 +1,4 @@
-#![feature(new_uninit, min_specialization, ptr_metadata, get_mut_unchecked, is_some_and, let_chains, unboxed_closures, iter_intersperse, io_error_other, type_alias_impl_trait, const_fn_floating_point_arithmetic, concat_idents, const_trait_impl, core_intrinsics)]
+#![feature(new_uninit, waker_getters, min_specialization, ptr_metadata, get_mut_unchecked, is_some_and, let_chains, unboxed_closures, iter_intersperse, io_error_other, type_alias_impl_trait, const_fn_floating_point_arithmetic, concat_idents, const_trait_impl, core_intrinsics)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[cfg(all(feature = "simd", not(all(target_family = "wasm", target_feature = "simd128"))))]
@@ -103,6 +103,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 #[docfg::docfg(target_feature = "atomics")]
 pub use wasm_thread as thread;
 
+/// Context scope functionality
 pub mod scope;
 
 /// Task-related functionality
@@ -140,6 +141,11 @@ pub mod storage;
 
 /// Various utils
 pub mod utils;
+
+/// Async runtime for WASM + JS
+#[cfg(any(test, target_feature = "atomics"))]
+#[cfg_attr(docsrs, doc(cfg(target_feature = "atomics")))]
+pub mod runtime;
 
 /// Prelude
 pub mod prelude {
